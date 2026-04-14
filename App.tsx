@@ -99,6 +99,8 @@ const App: React.FC = () => {
           initialMoves: type === 'moves' ? prev.upgrades.initialMoves + 2 : prev.upgrades.initialMoves,
         }
       }));
+    } else {
+      audio.playError();
     }
   };
 

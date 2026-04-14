@@ -54,6 +54,12 @@ class AudioEngine {
     });
   }
 
+  playError() {
+    this.init();
+    this.beep(220, 0.1, 'square');
+    setTimeout(() => this.beep(110, 0.1, 'square'), 100);
+  }
+
   private beep(freq: number, duration: number, type: OscillatorType = 'sine', volume = 0.2) {
     if (!this.ctx) return;
     const osc = this.ctx.createOscillator();
