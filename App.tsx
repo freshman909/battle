@@ -9,6 +9,7 @@ import PostBattle from './components/PostBattle';
 import UpgradeMenu from './components/UpgradeMenu';
 import StartScreen from './components/StartScreen';
 import UnitShowcase from './components/UnitShowcase';
+import TestMode from './components/TestMode';
 
 const App: React.FC = () => {
   const [phase, setPhase] = useState<GamePhase>(GamePhase.START);
@@ -86,6 +87,11 @@ const App: React.FC = () => {
     setPhase(GamePhase.SHOWCASE);
   };
 
+  const handleTestMode = () => {
+    audio.playClick();
+    setPhase(GamePhase.TEST_MODE);
+  };
+
   const applyUpgrade = (type: 'attack' | 'hp' | 'moves', cost: number) => {
     if (gameState.diamonds >= cost) {
       audio.playMatch();
@@ -112,11 +118,15 @@ const App: React.FC = () => {
       </div>
 
       {phase === GamePhase.START && (
-        <StartScreen onStart={handleStartGame} onShowcase={handleGoToShowcase} />
+        <StartScreen onStart={handleStartGame} onShowcase={handleGoToShowcase} onTestMode={handleTestMode} />
       )}
 
       {phase === GamePhase.SHOWCASE && (
         <UnitShowcase onBack={handleBackToStart} />
+      )}
+
+      {phase === GamePhase.TEST_MODE && (
+        <TestMode onBack={handleBackToStart} />
       )}
 
       {phase === GamePhase.MATCH_THREE && (

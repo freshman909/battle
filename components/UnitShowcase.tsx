@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { UnitType } from '../types';
 import { UNIT_CONFIGS, UNIT_COLORS } from '../constants';
 import { audio } from '../utils/audio';
+import { drawUnitOnCanvas } from '../utils/unitDrawer';
 
 const unitDetails = {
   [UnitType.ARCHER]: {
@@ -20,129 +21,18 @@ const unitDetails = {
     features: '毁灭冲锋：战斗开始时以极快速度冲向敌后。无畏打击：冲锋期间进入无敌状态，造成高额瞬间伤害。',
     freq: '1.2s'
   },
+  [UnitType.CAVALRY]: {
+    name: '骑兵',
+    features: '高速冲刺：积累奔跑值后发动冲锋，附带击退效果。爆发伤害：奔跑值越高，冲撞伤害越高。',
+    freq: '1.2s'
+  },
   [UnitType.BLANK]: { name: '', features: '', freq: '' }
-};
-
-// 绘制士兵的函数
-const drawUnitOnCanvas = (
-  ctx: CanvasRenderingContext2D, 
-  type: UnitType, 
-  centerX: number, 
-  centerY: number, 
-  scale: number = 2
-) => {
-  ctx.save();
-  ctx.translate(centerX, centerY);
-  ctx.scale(scale, scale);
-
-  const team = { main: '#3b82f6', dark: '#1e40af' };
-
-  // 阴影
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.beginPath();
-  ctx.ellipse(0, 10, 8, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  if (type === UnitType.SWORDSMAN) {
-    // 剑盾兵
-    ctx.fillStyle = team.main;
-    ctx.fillRect(-5, -8, 10, 10);
-    ctx.fillStyle = team.dark;
-    ctx.fillRect(-3, -6, 6, 2);
-    
-    ctx.fillStyle = team.dark;
-    ctx.fillRect(-4, -13, 8, 5);
-    ctx.fillStyle = '#fbbf24';
-    ctx.fillRect(-1, -14, 2, 2);
-    
-    ctx.fillStyle = '#8b5a2b';
-    ctx.beginPath();
-    ctx.arc(-6, -2, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = team.main;
-    ctx.fillRect(-7, -3, 2, 2);
-    
-    ctx.save();
-    ctx.translate(6, -5);
-    ctx.rotate(-Math.PI / 6);
-    ctx.fillStyle = '#c0c0c0';
-    ctx.fillRect(-1, -10, 2, 12);
-    ctx.fillStyle = '#8b4513';
-    ctx.fillRect(-2, 2, 4, 2);
-    ctx.restore();
-  } else if (type === UnitType.SPEARMAN) {
-    // 矛兵
-    ctx.fillStyle = team.main;
-    ctx.fillRect(-4, -10, 8, 12);
-    ctx.fillStyle = team.dark;
-    ctx.fillRect(-2, -8, 4, 8);
-    
-    ctx.fillStyle = team.dark;
-    ctx.fillRect(-3, -14, 6, 4);
-    ctx.fillStyle = team.main;
-    ctx.fillRect(-4, -12, 1, 3);
-    ctx.fillRect(3, -12, 1, 3);
-    
-    ctx.save();
-    ctx.translate(5, -4);
-    ctx.rotate(-Math.PI / 8);
-    ctx.fillStyle = '#8b7355';
-    ctx.fillRect(-1, -25, 2, 32);
-    ctx.fillStyle = '#c0c0c0';
-    ctx.beginPath();
-    ctx.moveTo(0, -32);
-    ctx.lineTo(-2, -25);
-    ctx.lineTo(2, -25);
-    ctx.fill();
-    ctx.restore();
-  } else if (type === UnitType.ARCHER) {
-    // 弓箭手（修正：弓在前，箭筒在后）
-    ctx.fillStyle = team.main;
-    ctx.fillRect(-4, -8, 8, 9);
-    ctx.fillStyle = '#8b6914';
-    ctx.fillRect(-3, -6, 6, 5);
-    
-    ctx.fillStyle = team.dark;
-    ctx.beginPath();
-    ctx.arc(0, -11, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#1f2937';
-    ctx.fillRect(-2, -12, 4, 3);
-    
-    // 箭袋（在背后）
-    ctx.fillStyle = '#8b4513';
-    ctx.fillRect(-5, -10, 3, 9);
-    ctx.fillStyle = '#c0c0c0';
-    ctx.fillRect(-4, -13, 1, 4);
-    ctx.fillRect(-4, -11, 1, 3);
-    
-    // 弓（在前面 - 棕色弯曲弓身）
-    ctx.save();
-    ctx.translate(5, -4);
-    // 弓身（棕色，弯曲向前）
-    ctx.strokeStyle = '#8b4513';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, 0, 8, -Math.PI / 2, Math.PI / 2, false);
-    ctx.stroke();
-    // 弓弦（白色/银色）
-    ctx.strokeStyle = '#e5e7eb';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, -8);
-    ctx.lineTo(0, 0);
-    ctx.lineTo(0, 8);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  ctx.restore();
 };
 
 const UnitShowcase: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [index, setIndex] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const types = [UnitType.SWORDSMAN, UnitType.SPEARMAN, UnitType.ARCHER];
+  const types = [UnitType.SWORDSMAN, UnitType.SPEARMAN, UnitType.ARCHER, UnitType.CAVALRY];
   const current = types[index];
   const config = UNIT_CONFIGS[current];
   const detail = unitDetails[current];
@@ -182,7 +72,7 @@ const UnitShowcase: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       ctx.stroke();
     }
 
-    // 绘制士兵
+    // 绘制deepseek风格士兵
     drawUnitOnCanvas(ctx, current, 100, 110, 3);
 
     // 绘制装饰边框 - 科技感
@@ -229,7 +119,7 @@ const UnitShowcase: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         <div className="flex items-center gap-2 bg-slate-800 px-3 py-1 rounded-full">
           <span className="text-slate-400 text-sm font-bold">{index + 1}</span>
           <span className="text-slate-600">/</span>
-          <span className="text-slate-500 text-sm">3</span>
+          <span className="text-slate-500 text-sm">4</span>
         </div>
       </div>
 

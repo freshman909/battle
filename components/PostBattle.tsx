@@ -20,10 +20,11 @@ const PostBattle: React.FC<PostBattleProps> = ({ score, level, diamonds, stats, 
     [UnitType.ARCHER]: '弓箭',
     [UnitType.SWORDSMAN]: '剑盾',
     [UnitType.SPEARMAN]: '矛兵',
+    [UnitType.CAVALRY]: '骑兵',
     [UnitType.BLANK]: '',
   };
 
-  const types = [UnitType.SWORDSMAN, UnitType.SPEARMAN, UnitType.ARCHER];
+  const types = [UnitType.SWORDSMAN, UnitType.SPEARMAN, UnitType.CAVALRY, UnitType.ARCHER];
 
   return (
     <div className="flex flex-col items-center justify-center gap-6 z-20 p-8 bg-black/90 hand-drawn-border max-w-2xl w-full text-center">

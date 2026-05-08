@@ -26,7 +26,7 @@ const MatchThree: React.FC<MatchThreeProps> = ({ moves, onEnd, onScoreUpdate }) 
   const GAP = 12; 
 
   const generateTile = useCallback((x: number, y: number): AnimatedTile => {
-    const types = [UnitType.ARCHER, UnitType.SWORDSMAN, UnitType.SPEARMAN, UnitType.BLANK];
+    const types = [UnitType.ARCHER, UnitType.SWORDSMAN, UnitType.SPEARMAN, UnitType.CAVALRY, UnitType.BLANK];
     return {
       id: uuidv4(),
       type: types[Math.floor(Math.random() * types.length)],
@@ -251,6 +251,7 @@ const MatchThree: React.FC<MatchThreeProps> = ({ moves, onEnd, onScoreUpdate }) 
         case UnitType.ARCHER: return '弓';
         case UnitType.SWORDSMAN: return '盾';
         case UnitType.SPEARMAN: return '矛';
+        case UnitType.CAVALRY: return '骑';
         default: return '';
     }
   }

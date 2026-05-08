@@ -5,11 +5,12 @@ import { audio } from '../utils/audio';
 interface StartScreenProps {
   onStart: () => void;
   onShowcase: () => void;
+  onTestMode: () => void;
 }
 
-const StartScreen: React.FC<StartScreenProps> = ({ onStart, onShowcase }) => {
+const StartScreen: React.FC<StartScreenProps> = ({ onStart, onShowcase, onTestMode }) => {
   return (
-    <div className="flex flex-col items-center justify-around h-full py-20 z-10 text-center w-full max-w-4xl">
+    <div className="flex flex-col items-center justify-around H-full py-20 z-10 text-center w-full max-w-4xl">
       <div className="space-y-6">
         <h1 className="text-6xl sm:text-8xl text-white pixel-text-shadow font-bold italic tracking-widest leading-tight">
           像素<br/><span className="text-red-500">军团</span>
@@ -33,9 +34,15 @@ const StartScreen: React.FC<StartScreenProps> = ({ onStart, onShowcase }) => {
             >
               士兵<br/>展示
             </button>
+            <button 
+              onClick={() => { audio.playClick(); onTestMode(); }}
+              className="w-24 h-24 bg-purple-600 hover:bg-purple-700 text-[10px] leading-tight pixel-border pixel-shadow square-btn font-bold p-2"
+            >
+              测试<br/>模式
+            </button>
         </div>
         
-        <div className="grid grid-cols-3 gap-12 opacity-80">
+        <div className="grid grid-cols-4 gap-8 opacity-80">
            <div className="flex flex-col items-center gap-3">
               <div className="w-12 h-12 bg-blue-400 hand-drawn-border flex items-center justify-center text-xs font-bold">弓</div>
               <span className="text-xs text-zinc-300">弓箭手</span>
@@ -47,6 +54,10 @@ const StartScreen: React.FC<StartScreenProps> = ({ onStart, onShowcase }) => {
            <div className="flex flex-col items-center gap-3">
               <div className="w-12 h-12 bg-red-400 hand-drawn-border flex items-center justify-center text-xs font-bold">矛</div>
               <span className="text-xs text-zinc-300">矛兵</span>
+           </div>
+           <div className="flex flex-col items-center gap-3">
+              <div className="w-12 h-12 bg-yellow-400 hand-drawn-border flex items-center justify-center text-xs font-bold">骑</div>
+              <span className="text-xs text-zinc-300">骑兵</span>
            </div>
         </div>
       </div>

@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>中世纪像素角色 • 剑盾/弓箭/法师/骑兵 动作测试</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --panel-bg: #16213e;
+      --btn-bg: #1f3460;
+      --btn-hover: #2a4480;
+      --btn-active: #3a5aaa;
+      --attack-btn: #8b1a1a;
+      --attack-hover: #a52020;
+      --attack-active: #c62828;
+      --text: #c8d6e5;
+      --text-secondary: #8899aa;
+      --accent: #e8b830;
+      --border: #2a3a55;
+      --shadow: 0 8px 32px rgba(0,0,0,0.5);
+      --radius: 12px;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background: var(--bg);
+      display: flex; justify-content: center; align-items: center;
+      min-height: 100vh; padding: 12px;
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+    .main-container {
+      width: 100%; max-width: 620px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .display-panel {
+      background: var(--panel-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 8px; position: relative;
+    }
+    .canvas-wrapper {
+      position: relative; width: 100%; aspect-ratio: 5/4;
+      max-height: 460px; border-radius: 8px; overflow: hidden;
+      background: radial-gradient(ellipse at center bottom,
+        rgba(60,80,110,0.2) 0%, rgba(30,40,60,0.5) 40%, rgba(20,25,38,0.8) 100%);
+    }
+    canvas { display: block; width: 100%; height: 100%; }
+    .status-tag {
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.6); color: #e8b830; font-size: 12px; font-weight: 600;
+      letter-spacing: 0.06em; padding: 3px 14px; border-radius: 20px;
+      pointer-events: none; backdrop-filter: blur(4px);
+      border: 1px solid rgba(232,184,48,0.3);
+    }
+    .status-tag.idle-tag { color: #aab; border-color: rgba(170,170,187,0.2); }
+    .control-panel {
+      background: var(--panel-bg); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 16px 14px; display: flex; flex-direction: column; gap: 16px;
+    }
+    .action-row {
+      display: flex; align-items: center; justify-content: center;
+      gap: 20px; flex-wrap: wrap;
+    }
+    .dpad {
+      display: grid; grid-template-columns: 52px 52px 52px;
+      grid-template-rows: 52px 52px 52px; gap: 5px;
+      justify-items: center; align-items: center;
+    }
+    .btn-dir {
+      width: 50px; height: 50px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--btn-bg);
+      color: #dde; font-size: 22px; cursor: pointer;
+      transition: all 0.1s ease; display: flex;
+      align-items: center; justify-content: center;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.4); touch-action: manipulation;
+    }
+    .btn-dir:hover { background: var(--btn-hover); border-color: #4a6090; }
+    .btn-dir:active, .btn-dir.pressed {
+      background: var(--btn-active); border-color: #6a8ac8;
+      transform: translateY(2px); box-shadow: 0 1px 3px rgba(0,0,0,0.5), inset 0 2px 5px rgba(0,0,0,0.4);
+      color: #fff;
+    }
+    .dpad .btn-up { grid-column:2; grid-row:1; border-radius:12px 12px 8px 8px; }
+    .dpad .btn-left { grid-column:1; grid-row:2; border-radius:12px 8px 8px 12px; }
+    .dpad .btn-center {
+      grid-column:2; grid-row:2; width:38px; height:38px; border-radius:50%;
+      font-size:10px; background:#1a2744; border:1px dashed #3a4a66;
+      color:#556; cursor:pointer;
+    }
+    .dpad .btn-right { grid-column:3; grid-row:2; border-radius:8px 12px 12px 8px; }
+    .dpad .btn-down { grid-column:2; grid-row:3; border-radius:8px 8px 12px 12px; }
+    .btn-attack {
+      width: 70px; height: 70px; border-radius: 50%;
+      border: 2px solid #6b1a1a; background: var(--attack-btn);
+      color: #fcc; font-size: 16px; font-weight: 700;
+      cursor: pointer; transition: all 0.1s ease;
+      box-shadow: 0 6px 18px rgba(180,30,30,0.4); touch-action: manipulation;
+    }
+    .btn-attack:hover { background: var(--attack-hover); transform: scale(1.04); }
+    .btn-attack:active, .btn-attack.pressed {
+      background: var(--attack-active); transform: scale(0.94);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.6), inset 0 3px 8px rgba(0,0,0,0.5);
+    }
+    .btn-attack.cooldown { opacity:0.5; pointer-events:none; transform:scale(0.96); }
+    .divider { height:1px; background:var(--border); opacity:0.5; }
+    .switch-row {
+      display: flex; flex-wrap: wrap; align-items: center;
+      justify-content: center; gap: 8px;
+    }
+    .switch-label { font-size:11px; color:var(--text-secondary); }
+    .btn-switch {
+      padding: 8px 14px; border-radius: 20px; border:1px solid var(--border);
+      background: var(--btn-bg); color:#c8d6e5; font-size:12px;
+      font-weight:500; cursor:pointer; transition:all 0.15s;
+      box-shadow:0 2px 8px rgba(0,0,0,0.2); touch-action:manipulation;
+    }
+    .btn-switch:hover { background:var(--btn-hover); border-color:#4a6090; }
+    .btn-switch.active {
+      background:var(--btn-active); border-color:#6a8ac8; color:#fff;
+      font-weight:700; box-shadow:0 0 0 3px rgba(70,110,180,0.3);
+    }
+    .kb-hint { text-align:center; font-size:10px; color:#556; }
+    @media (max-width:480px) {
+      .dpad { grid-template-columns:44px 44px 44px; grid-template-rows:44px 44px 44px; }
+      .dpad .btn-dir { width:42px; height:42px; font-size:18px; }
+      .btn-attack { width:56px; height:56px; font-size:14px; }
+    }
+  </style>
+</head>
+<body>
+<div class="main-container">
+  <div class="display-panel">
+    <div class="canvas-wrapper" id="canvasWrapper">
+      <canvas id="mainCanvas"></canvas>
+      <div class="status-tag idle-tag" id="statusTag">待机</div>
+    </div>
+  </div>
+  <div class="control-panel">
+    <div class="action-row">
+      <div class="dpad" id="dpadContainer">
+        <button class="btn-dir btn-up" data-dir="up">▲</button>
+        <button class="btn-dir btn-left" data-dir="left">◀</button>
+        <button class="btn-center" id="btnStop">停</button>
+        <button class="btn-dir btn-right" data-dir="right">▶</button>
+        <button class="btn-dir btn-down" data-dir="down">▼</button>
+      </div>
+      <button class="btn-attack" id="btnAttack">⚔️攻击</button>
+    </div>
+    <div class="divider"></div>
+    <div class="switch-row" id="switchRow">
+      <span class="switch-label">切换：</span>
+      <button class="btn-switch active" data-char="0">🛡️重装剑盾</button>
+      <button class="btn-switch" data-char="1">🏹游侠射手</button>
+      <button class="btn-switch" data-char="2">🔮奥术法师</button>
+      <button class="btn-switch" data-char="3">🐴轻骑兵</button>
+      <button class="btn-switch" data-char="4">👑皇家剑盾</button>
+      <button class="btn-switch" data-char="5">🌑暗影剑盾</button>
+    </div>
+    <div class="kb-hint">⌨️ WASD 移动 · 空格 攻击 · 数字1-6 切换</div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const canvas = document.getElementById('mainCanvas');
+    const ctx = canvas.getContext('2d');
+    const wrapper = document.getElementById('canvasWrapper');
+    const statusTag = document.getElementById('statusTag');
+    const btnAttack = document.getElementById('btnAttack');
+    const btnStop = document.getElementById('btnStop');
+    const switchRow = document.getElementById('switchRow');
+
+    let W, H;
+    function resize() {
+      const rect = wrapper.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = rect.width; H = rect.height;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+      ctx.setTransform(1,0,0,1,0,0); ctx.scale(dpr,dpr);
+      if (!S.init) { S.px = W/2; S.py = H*0.52; S.init = true; }
+      clamp();
+    }
+    function clamp() {
+      S.px = Math.max(40, Math.min(W-40, S.px));
+      S.py = Math.max(50, Math.min(H-40, S.py));
+    }
+
+    const S = {
+      init: false, px:0, py:0, facing:1,
+      dir: null, moving: false,
+      attacking: false, attProg:0, attCd:0,
+      walkT: 0, char:0,
+      particles: [], projectiles: []
+    };
+
+    // ---------- 主题数据（形态差异化以类型区分）----------
+    const themes = [
+      { name:'重装剑盾', type:'knight',
+        armor1:'#3b5fbf', armor2:'#2a4a9e', armorDark:'#1e3878', armorHi:'#5a7de0',
+        accent1:'#c83737', accent2:'#a02020', accentHi:'#e85050',
+        helm1:'#3b5fbf', helm2:'#2a4a9e', plume:'#d44242', plumeEnd:'#f06060',
+        shield:'#c83737', shBorder:'#d4a840', shEmblem:'#d4a840',
+        blade:'#d8d8e0', blade2:'#b0b0b8', bladeEdge:'#f0f0f5',
+        hilt:'#d4a840', hilt2:'#b89030', guard:'#c49a38',
+        pants:'#2c4480', boots:'#4a3020', bootsHi:'#5a3a28',
+        skin:'#e8c9a0', skinD:'#c8a878'
+      },
+      { name:'游侠射手', type:'archer',
+        armor1:'#4a7c3f', armor2:'#3a602f', armorDark:'#2a4a20', armorHi:'#6a9c5e',
+        accent1:'#c8a030', accent2:'#9a7820', accentHi:'#e0b840',
+        helm1:'#4a6c3f', helm2:'#3a5530', plume:'#c8a030', plumeEnd:'#d8b840',
+        shield:'none', shBorder:'none', shEmblem:'none',
+        blade:'#d8d8e0', blade2:'#b0b0b8', bladeEdge:'#f0f0f5',
+        hilt:'#c8a850', hilt2:'#a08030', guard:'#b89840',
+        pants:'#3a5530', boots:'#4a3a28', bootsHi:'#5a4632',
+        skin:'#e8c9a0', skinD:'#c8a878',
+        bowWood:'#7a5e3e', bowStr:'#d8c8a8', arrow:'#c0a070'
+      },
+      { name:'奥术法师', type:'mage',
+        armor1:'#3838a0', armor2:'#282878', armorDark:'#181858', armorHi:'#5858c0',
+        accent1:'#c84040', accent2:'#a02020', accentHi:'#e05050',
+        helm1:'#3838a0', helm2:'#282878', plume:'#c84040', plumeEnd:'#e05050',
+        shield:'none', robe:'#2828a0', robeHi:'#4040c0',
+        blade:'#e0e0f0', blade2:'#c0c0d0', bladeEdge:'#f8f8ff',
+        hilt:'#c8a040', hilt2:'#a08020', guard:'#b89830',
+        pants:'#282878', boots:'#3a2a38', bootsHi:'#4a3a48',
+        skin:'#e8c9a0', skinD:'#c8a878',
+        staffWood:'#8b6b3c', orb:'#40e0ff'
+      },
+      { name:'轻骑兵', type:'cavalry',
+        armor1:'#b89040', armor2:'#8e6a28', armorDark:'#6a4a18', armorHi:'#d8b060',
+        accent1:'#c86040', accent2:'#a04028', accentHi:'#e87050',
+        helm1:'#b89040', helm2:'#8e6a28', plume:'#c86040', plumeEnd:'#e87050',
+        shield:'#8e6a28', shBorder:'#d8b060', shEmblem:'#c86040',
+        blade:'#d8d8e0', blade2:'#b0b0b8', bladeEdge:'#f0f0f5',
+        hilt:'#d4a840', hilt2:'#b89030', guard:'#c49a38',
+        pants:'#6a4a18', boots:'#3a2a18', bootsHi:'#4a3a22',
+        skin:'#e8c9a0', skinD:'#c8a878',
+        horse:'#8b5a3c', horseMane:'#4a3020'
+      },
+      { name:'皇家剑盾', type:'knight',
+        armor1:'#b83030', armor2:'#8e1e1e', armorDark:'#6a1414', armorHi:'#d84848',
+        accent1:'#e8b830', accent2:'#c49820', accentHi:'#f0cc50',
+        helm1:'#b83030', helm2:'#8e1e1e', plume:'#f0d860', plumeEnd:'#f8e880',
+        shield:'#d4a840', shBorder:'#e8c860', shEmblem:'#8e1e1e',
+        blade:'#e8e8f0', blade2:'#c0c0c8', bladeEdge:'#fafafe',
+        hilt:'#e8c860', hilt2:'#c8a040', guard:'#d4b050',
+        pants:'#7a2020', boots:'#3a2418', bootsHi:'#4a3020',
+        skin:'#f0d0a8', skinD:'#d4b080'
+      },
+      { name:'暗影剑盾', type:'knight',
+        armor1:'#3a3e4a', armor2:'#2a2d36', armorDark:'#1a1c22', armorHi:'#5a5e6a',
+        accent1:'#8899aa', accent2:'#667788', accentHi:'#aabbcc',
+        helm1:'#3a3e4a', helm2:'#2a2d36', plume:'#556677', plumeEnd:'#778899',
+        shield:'#2a2d36', shBorder:'#667788', shEmblem:'#8899aa',
+        blade:'#c8ccd4', blade2:'#a0a4ac', bladeEdge:'#e0e4ec',
+        hilt:'#8899aa', hilt2:'#667788', guard:'#778898',
+        pants:'#2a2d36', boots:'#2a2218', bootsHi:'#3a3020',
+        skin:'#d8c0a0', skinD:'#b89878'
+      }
+    ];
+    const T = () => themes[S.char];
+
+    // ---------- 粒子/投射物 ----------
+    function spawnPart(x,y,dir) {
+      for(let i=0;i<8;i++) {
+        let a = (dir>0?-0.5:Math.PI+0.5) + (Math.random()-0.5)*1.2;
+        let sp=70+Math.random()*160;
+        S.particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-20,life:0.4,ml:0.4,sz:2+Math.random()*3});
+      }
+    }
+    function spawnProj(x,y,dir,type) {
+      let sp = type==='arrow'?420:300;
+      S.projectiles.push({x,y,vx:dir*sp,vy:0,life:1.6,type,color:T().orb||T().arrow});
+    }
+    function updParticles(dt) {
+      for(let i=S.particles.length-1;i>=0;i--) {
+        let p=S.particles[i]; p.life-=dt;
+        if(p.life<=0){S.particles.splice(i,1);continue;}
+        p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=200*dt;
+      }
+    }
+    function updProjectiles(dt) {
+      for(let i=S.projectiles.length-1;i>=0;i--) {
+        let p=S.projectiles[i]; p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt;
+        if(p.life<=0||p.x<-40||p.x>W+40) S.projectiles.splice(i,1);
+      }
+    }
+
+    // ---------- 差异化绘制模块 ----------
+    function shadow(x,y) {
+      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.beginPath();
+      ctx.ellipse(x,y+38,24,7,0,0,Math.PI*2); ctx.fill();
+    }
+
+    // 重装剑盾 腿部 (粗壮)
+    function knightLegs(t,phase,move) {
+      let s=move?Math.sin(phase)*4:0, b=move?Math.abs(Math.cos(phase))*2:0;
+      ctx.fillStyle=t.pants; ctx.fillRect(-7+s*0.5,10-b,7,16); ctx.fillRect(0-s*0.5,10-b,7,16);
+      ctx.fillStyle=t.boots; ctx.fillRect(-8+s*0.5,24-b,9,7); ctx.fillRect(-1-s*0.5,24-b,9,7);
+      ctx.fillStyle=t.bootsHi; ctx.fillRect(-7+s*0.5,24-b,7,2); ctx.fillRect(0-s*0.5,24-b,7,2);
+      // 腿甲
+      ctx.fillStyle=t.armorHi; ctx.fillRect(-6+s*0.5,18-b,5,3); ctx.fillRect(1-s*0.5,18-b,5,3);
+    }
+    // 弓箭手 腿部 (纤细)
+    function archerLegs(t,phase,move) {
+      let s=move?Math.sin(phase)*4.5:0, b=move?Math.abs(Math.cos(phase))*2.5:0;
+      ctx.fillStyle=t.pants; ctx.fillRect(-5+s*0.6,10-b,5,15); ctx.fillRect(0-s*0.6,10-b,5,15);
+      ctx.fillStyle=t.boots; ctx.fillRect(-6+s*0.6,23-b,7,6); ctx.fillRect(-1-s*0.6,23-b,7,6);
+      ctx.fillStyle=t.bootsHi; ctx.fillRect(-5+s*0.6,23-b,5,2); ctx.fillRect(0-s*0.6,23-b,5,2);
+    }
+
+    // 剑盾 躯干 (宽厚板甲)
+    function knightBody(t) {
+      let g=ctx.createLinearGradient(0,-12,0,10); g.addColorStop(0,t.armor1); g.addColorStop(0.6,t.armor2); g.addColorStop(1,t.armorDark);
+      ctx.fillStyle=g; ctx.fillRect(-10,-12,20,24);
+      ctx.fillStyle=t.armorHi; ctx.fillRect(-1,-12,2,24);
+      // 大肩甲
+      ctx.fillStyle=t.armor2; ctx.fillRect(-13,-12,4,10); ctx.fillRect(9,-12,4,10);
+      ctx.fillStyle=t.armorHi; ctx.fillRect(-13,-12,4,3); ctx.fillRect(9,-12,4,3);
+      ctx.fillStyle=t.accent1; ctx.fillRect(-11,8,22,5);
+      ctx.fillStyle=t.hilt; ctx.fillRect(-3,6,6,6);
+    }
+    // 弓箭手 躯干 (轻便皮甲/布甲)
+    function archerBody(t) {
+      ctx.fillStyle=t.armor1; ctx.fillRect(-7,-10,14,20);
+      ctx.fillStyle=t.armorHi; ctx.fillRect(-1,-10,2,20);
+      ctx.fillStyle=t.accent1; ctx.fillRect(-8,6,16,3);
+      ctx.fillStyle=t.armor2; ctx.fillRect(-8,-8,3,7); ctx.fillRect(5,-8,3,7);
+      ctx.fillStyle=t.hilt; ctx.fillRect(-2,4,4,4);
+    }
+
+    // 剑盾 头部 (全封闭头盔)
+    function knightHead(t,bob) {
+      let y=-24+(bob||0);
+      ctx.fillStyle=t.skinD; ctx.fillRect(-3,y+12,6,4);
+      let g=ctx.createLinearGradient(0,y-8,0,y+12); g.addColorStop(0,t.helm1); g.addColorStop(0.6,t.helm2); g.addColorStop(1,t.armorDark);
+      ctx.fillStyle=g; ctx.fillRect(-8,y-6,16,18);
+      ctx.fillStyle=t.helm1; ctx.fillRect(-6,y-10,12,5); ctx.fillRect(-4,y-14,8,5); ctx.fillRect(-2,y-16,4,3);
+      ctx.fillStyle=t.plume; ctx.fillRect(2,y-20,3,9); ctx.fillRect(3,y-23,2,4);
+      ctx.fillStyle=t.plumeEnd; ctx.fillRect(3,y-25,2,3);
+      // 眼缝
+      ctx.fillStyle='#111'; ctx.fillRect(-4,y+1,3,2); ctx.fillRect(2,y+1,3,2);
+      ctx.fillStyle=t.armorHi; ctx.fillRect(-8,y+11,16,2);
+    }
+    // 弓箭手 头部 (兜帽/轻盔)
+    function archerHead(t,bob) {
+      let y=-22+(bob||0);
+      ctx.fillStyle=t.skin; ctx.fillRect(-4,y+2,8,8);
+      ctx.fillStyle=t.helm1; ctx.fillRect(-7,y-2,14,12);
+      ctx.fillStyle=t.helm2; ctx.fillRect(-5,y-6,10,5);
+      ctx.fillStyle=t.plume; ctx.fillRect(1,y-14,3,8);
+      ctx.fillStyle='#111'; ctx.fillRect(-3,y+3,2,2); ctx.fillRect(2,y+3,2,2);
+    }
+
+    // 剑盾 盾牌 (大型塔盾)
+    function knightShield(t,move,phase) {
+      if(t.shield==='none')return;
+      let sw=move?Math.sin(phase+Math.PI)*1.5:0;
+      ctx.save(); ctx.translate(-14+sw*0.3,-8);
+      ctx.fillStyle=t.shield; ctx.fillRect(0,0,11,24);
+      ctx.fillStyle=t.shBorder; ctx.fillRect(1,2,9,20);
+      ctx.fillStyle=t.shEmblem; ctx.fillRect(3,8,5,8);
+      ctx.restore();
+    }
+
+    // 剑盾 武器 (阔剑)
+    function knightSword(t,att,prog,phase,move) {
+      ctx.save(); ctx.translate(8,-5);
+      let sw=move&&!att?Math.sin(phase+0.8)*1:0; ctx.translate(0,sw);
+      let rot=0;
+      if(att&&prog!==undefined){
+        let p=prog; if(p<0.25) rot=(p/0.25)*1.2; else if(p<0.6) rot=1.2; else rot=1.2*(1-(p-0.6)/0.4);
+        rot*=Math.PI/3.5;
+      }
+      ctx.rotate(rot);
+      ctx.fillStyle=t.hilt; ctx.fillRect(-1.5,0,5,9);
+      ctx.fillStyle=t.guard; ctx.fillRect(-5,-2,13,3);
+      ctx.fillStyle=t.blade; ctx.fillRect(1,-26,4,24);
+      ctx.fillStyle=t.bladeEdge; ctx.fillRect(2.5,-26,1,22);
+      ctx.fillStyle=t.blade; ctx.beginPath(); ctx.moveTo(0,-26); ctx.lineTo(6,-26); ctx.lineTo(3,-33); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // 弓箭手 武器 (长弓)
+    function archerBow(t,att,prog) {
+      ctx.save(); ctx.translate(8,-6);
+      ctx.fillStyle=t.bowWood; ctx.fillRect(-1,-15,3,30);
+      ctx.beginPath(); ctx.ellipse(0.5,0,8,22,0,0,Math.PI*2); ctx.strokeStyle=t.bowWood; ctx.lineWidth=3; ctx.stroke();
+      ctx.strokeStyle=t.bowStr; ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(0,14); ctx.stroke();
+      if(att && prog<0.35){
+        ctx.fillStyle=t.arrow; ctx.fillRect(-10,0,10,1.5);
+        ctx.fillStyle='#e0d0b0'; ctx.beginPath(); ctx.moveTo(-10,0); ctx.lineTo(-15,-2); ctx.lineTo(-15,2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // 法师与骑兵复用简化版（保持差异）
+    function mageBody(t){ ctx.fillStyle=t.robe; ctx.fillRect(-8,-10,16,24); ctx.fillStyle=t.robeHi; ctx.fillRect(-2,-10,4,24); }
+    function mageStaff(t,att,prog){
+      ctx.save(); ctx.translate(6,-10); ctx.fillStyle=t.staffWood; ctx.fillRect(-1,-20,3,32);
+      ctx.fillStyle=t.hilt; ctx.fillRect(-3,-20,7,5);
+      if(att&&prog<0.5){ ctx.fillStyle=t.orb; ctx.shadowColor=t.orb; ctx.shadowBlur=12; ctx.beginPath(); ctx.arc(1,-22,6,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0; }
+      ctx.restore();
+    }
+    function horseBody(t,phase,move){ let b=move?Math.abs(Math.cos(phase))*2:0; ctx.save(); ctx.translate(0,6-b); ctx.fillStyle=t.horse; ctx.fillRect(-14,0,28,16); ctx.fillRect(-16,5,7,8); ctx.fillRect(9,5,7,8); ctx.fillStyle=t.horseMane; ctx.fillRect(-8,-4,6,10); ctx.fillStyle='#5a3020'; ctx.fillRect(-14,14,5,10); ctx.fillRect(-5,14,5,10); ctx.fillRect(3,14,5,10); ctx.fillRect(10,14,5,10); ctx.restore(); }
+    function spear(t,att,prog){ ctx.save(); ctx.translate(10,-14); let adv=att&&prog<0.3?10:0; ctx.translate(adv,0); ctx.fillStyle='#8b7355'; ctx.fillRect(-22,-1,34,2); ctx.fillStyle='#c0c0c0'; ctx.beginPath(); ctx.moveTo(12,-3); ctx.lineTo(18,0); ctx.lineTo(12,3); ctx.fill(); ctx.restore(); }
+
+    // ---------- 角色组装 ----------
+    function drawCharacter(x,y,t,type,facing,move,phase,att,prog){
+      ctx.save(); ctx.translate(x,y);
+      if(facing<0) ctx.scale(-1,1);
+      shadow(0,0);
+      let bob = move ? Math.abs(Math.cos(phase))*5*0.7 : 0;
+      ctx.save(); ctx.translate(0,-bob);
+
+      if(type==='knight'){
+        knightLegs(t,phase,move);
+        knightBody(t);
+        knightShield(t,move,phase);
+        knightHead(t,0);
+        knightSword(t,att,prog,phase,move);
+      } else if(type==='archer'){
+        archerLegs(t,phase,move);
+        archerBody(t);
+        archerHead(t,0);
+        archerBow(t,att,prog);
+      } else if(type==='mage'){
+        archerLegs(t,phase,move); // 法师也用纤细腿
+        mageBody(t);
+        archerHead(t,0);
+        mageStaff(t,att,prog);
+      } else if(type==='cavalry'){
+        horseBody(t,phase,move);
+        ctx.save(); ctx.translate(0,-9);
+        knightBody(t);
+        knightHead(t,0);
+        spear(t,att,prog);
+        ctx.restore();
+      }
+      ctx.restore();
+      ctx.restore();
+    }
+
+    // ---------- 攻击逻辑 ----------
+    function attack() {
+      if(S.attacking || S.attCd>0) return;
+      let t=T(); S.attacking=true; S.attProg=0;
+      if(t.type==='archer'||t.type==='mage'){
+        let px=S.px + S.facing*20, py=S.py-10;
+        spawnProj(px,py,S.facing, t.type==='archer'?'arrow':'magic');
+        S.attCd = t.type==='archer'?0.55:0.7;
+      } else {
+        S.attCd=0.5;
+        spawnPart(S.px+S.facing*18, S.py-22, S.facing);
+      }
+      btnAttack.classList.add('pressed');
+      setTimeout(()=>btnAttack.classList.remove('pressed'),120);
+    }
+
+    // ---------- 更新与渲染 ----------
+    let last=performance.now();
+    function loop(now) {
+      let dt=(now-last)/1000; last=now;
+      if(dt>0.1) dt=0.1; if(dt<=0) dt=0.016;
+      update(dt); render();
+      requestAnimationFrame(loop);
+    }
+    function update(dt) {
+      if(S.moving && S.dir) {
+        let sp=150;
+        if(S.dir==='up') S.py-=sp*dt; else if(S.dir==='down') S.py+=sp*dt;
+        else if(S.dir==='left'){ S.px-=sp*dt; S.facing=-1; }
+        else if(S.dir==='right'){ S.px+=sp*dt; S.facing=1; }
+        clamp(); S.walkT+=7*Math.PI*2*dt;
+      } else { S.walkT*=0.85; if(Math.abs(S.walkT)<0.001) S.walkT=0; }
+      if(S.attacking) {
+        S.attProg+=dt/0.35;
+        if(S.attProg>=1){ S.attProg=0; S.attacking=false; }
+      }
+      if(S.attCd>0) S.attCd-=dt;
+      updParticles(dt); updProjectiles(dt);
+      let txt='待机', idle=true;
+      if(S.attacking){txt='⚡攻击中';idle=false;}
+      else if(S.moving){ let m={up:'↑',down:'↓',left:'←',right:'→'}; txt=m[S.dir]+' 移动';idle=false;}
+      statusTag.textContent=txt; statusTag.className='status-tag'+(idle?' idle-tag':'');
+    }
+    function render() {
+      ctx.clearRect(0,0,W,H);
+      let t=T();
+      drawCharacter(S.px,S.py,t,t.type,S.facing,S.moving,S.walkT,S.attacking,S.attProg);
+      // 投射物
+      for(let p of S.projectiles) {
+        ctx.save(); ctx.translate(p.x,p.y);
+        if(p.type==='arrow'){ ctx.fillStyle='#c0a070'; ctx.fillRect(-10,-1,14,2); ctx.fillStyle='#e0d0b0'; ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(-2,-3); ctx.lineTo(-2,3); ctx.fill(); }
+        else { ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=10; ctx.beginPath(); ctx.arc(0,0,5,0,2*Math.PI); ctx.fill(); ctx.shadowBlur=0; }
+        ctx.restore();
+      }
+      // 粒子
+      for(let p of S.particles) {
+        ctx.fillStyle='#f8e8c0'; ctx.globalAlpha=p.life/p.ml;
+        ctx.fillRect(p.x-1,p.y-1,3,3); ctx.globalAlpha=1;
+      }
+      ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+      ctx.fillText(t.name, S.px, S.py-(t.type==='cavalry'?58:48));
+    }
+
+    // ---------- 控制绑定 ----------
+    function setDir(d){ S.dir=d; S.moving=true; if(d==='left')S.facing=-1; if(d==='right')S.facing=1; updateDirBtn(); }
+    function stop(){ S.dir=null; S.moving=false; updateDirBtn(); }
+    function updateDirBtn(){ document.querySelectorAll('.btn-dir').forEach(b=>b.classList.toggle('pressed', S.moving&&b.dataset.dir===S.dir)); }
+    document.querySelectorAll('.btn-dir').forEach(b=>{
+      let d=b.dataset.dir;
+      b.addEventListener('mousedown',e=>{e.preventDefault();setDir(d);});
+      b.addEventListener('touchstart',e=>{e.preventDefault();setDir(d);},{passive:false});
+      b.addEventListener('mouseup',()=>{if(S.dir===d)stop();});
+      b.addEventListener('touchend',()=>{if(S.dir===d)stop();});
+      b.addEventListener('mouseleave',()=>{if(S.dir===d)stop();});
+    });
+    btnStop.addEventListener('mousedown',e=>{e.preventDefault();stop();});
+    btnStop.addEventListener('touchstart',e=>{e.preventDefault();stop();},{passive:false});
+    btnAttack.addEventListener('mousedown',e=>{e.preventDefault();attack();});
+    btnAttack.addEventListener('touchstart',e=>{e.preventDefault();attack();},{passive:false});
+    document.addEventListener('mouseup',stop); document.addEventListener('touchend',stop);
+    switchRow.addEventListener('click',e=>{
+      let b=e.target.closest('.btn-switch'); if(!b)return;
+      let i=parseInt(b.dataset.char); switchChar(i);
+    });
+    function switchChar(i){
+      if(S.char===i)return; S.char=i; S.particles=[]; S.projectiles=[]; S.attacking=false; S.attProg=0; S.attCd=0;
+      document.querySelectorAll('.btn-switch').forEach(b=>b.classList.toggle('active',parseInt(b.dataset.char)===i));
+    }
+    let keys={};
+    document.addEventListener('keydown',e=>{
+      if(e.target.tagName==='INPUT')return;
+      let k=e.key.toLowerCase(); if(keys[k])return; keys[k]=true;
+      if(k==='w'||k==='arrowup'){e.preventDefault();setDir('up');}
+      else if(k==='s'||k==='arrowdown'){e.preventDefault();setDir('down');}
+      else if(k==='a'||k==='arrowleft'){e.preventDefault();setDir('left');}
+      else if(k==='d'||k==='arrowright'){e.preventDefault();setDir('right');}
+      else if(k===' '){e.preventDefault();attack();}
+      else if(k>='1'&&k<='6')switchChar(parseInt(k)-1);
+    });
+    document.addEventListener('keyup',e=>{
+      let k=e.key.toLowerCase(); keys[k]=false;
+      let dirs=['w','arrowup','s','arrowdown','a','arrowleft','d','arrowright'];
+      if(dirs.includes(k)){
+        let still=dirs.some(d=>keys[d]);
+        if(!still)stop(); else{
+          if(keys['w']||keys['arrowup'])setDir('up');
+          else if(keys['s']||keys['arrowdown'])setDir('down');
+          else if(keys['a']||keys['arrowleft'])setDir('left');
+          else if(keys['d']||keys['arrowright'])setDir('right');
+        }
+      }
+    });
+    window.addEventListener('resize',resize);
+    resize(); last=performance.now(); requestAnimationFrame(loop);
+  })();
+</script>
+</body>
+</html>

@@ -3,6 +3,7 @@ export enum UnitType {
   ARCHER = 'ARCHER',
   SWORDSMAN = 'SWORDSMAN',
   SPEARMAN = 'SPEARMAN',
+  CAVALRY = 'CAVALRY',
   BLANK = 'BLANK'
 }
 
@@ -12,7 +13,8 @@ export enum GamePhase {
   BATTLE = 'BATTLE',
   POST_BATTLE = 'POST_BATTLE',
   UPGRADE = 'UPGRADE',
-  SHOWCASE = 'SHOWCASE'
+  SHOWCASE = 'SHOWCASE',
+  TEST_MODE = 'TEST_MODE'
 }
 
 export interface UnitStats {
@@ -41,7 +43,12 @@ export interface Unit {
   isCharging?: boolean;
   isInvulnerable?: boolean;
   attackTimer: number;
-  facing: 'left' | 'right'; // 新增：用于渲染引擎判断图片镜像
+  facing: 'left' | 'right';
+  walkPhase: number;
+  prevX: number;
+  prevY: number;
+  stamina?: number;
+  isRunning?: boolean;
 }
 
 export interface Tile {
