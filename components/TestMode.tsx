@@ -3,7 +3,7 @@ import { UnitType, Unit, BattleStats } from '../types';
 import { UNIT_CONFIGS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 import { audio } from '../utils/audio';
-import { drawUnitOnCanvas } from '../utils/unitDrawer';
+import { drawUnit, drawUnitOnCanvas } from '../utils/unitDrawer';
 
 interface VisualEffect {
   id: string;
@@ -75,8 +75,9 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         walkPhase: Math.random() * Math.PI * 2,
         prevX: 0,
         prevY: 0,
-        stamina: type === UnitType.CAVALRY ? 0 : undefined,
-        isRunning: type === UnitType.CAVALRY ? false : undefined,
+        vx: 0,
+        vy: 0,
+        chargeValue: type === UnitType.CAVALRY ? 100 : undefined,
       });
     });
 
@@ -97,8 +98,9 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         walkPhase: Math.random() * Math.PI * 2,
         prevX: 0,
         prevY: 0,
-        stamina: type === UnitType.CAVALRY ? 0 : undefined,
-        isRunning: type === UnitType.CAVALRY ? false : undefined,
+        vx: 0,
+        vy: 0,
+        chargeValue: type === UnitType.CAVALRY ? 100 : undefined,
       });
     });
 
@@ -119,6 +121,37 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   useEffect(() => {
     initBattle();
   }, [initBattle]);
+
+  const applyChargeDamage = useCallback((
+    unit: Unit,
+    target: Unit,
+    baseDamage: number,
+    knockback: number,
+    particleColor: string,
+    particleSpeed: number,
+    particleVyOffset: number
+  ) => {
+    if (target.isInvulnerable) return;
+    
+    const knockbackDir = unit.side === 'player' ? 1 : -1;
+    target.x += knockbackDir * knockback;
+    const chargeDmg = Math.floor(baseDamage * (1 - target.stats.defense));
+    target.stats.hp -= chargeDmg;
+    effectsRef.current.push({
+      id: uuidv4(), x: target.x, y: target.y - 20,
+      type: 'damage', life: 1, value: chargeDmg, isCrit: true
+    });
+    for (let i = 0; i < 6; i++) {
+      const pa = (Math.random() - 0.5) * Math.PI;
+      const sp = particleSpeed + Math.random() * (particleSpeed * 0.5);
+      effectsRef.current.push({
+        id: uuidv4(), x: target.x, y: target.y - 10,
+        type: 'particle', life: 0.4,
+        vx: Math.cos(pa) * sp, vy: Math.sin(pa) * sp - particleVyOffset,
+        size: 2 + Math.random() * 3, color: particleColor
+      });
+    }
+  }, []);
 
   const update = useCallback((time: number) => {
     if (lastTimeRef.current !== undefined) {
@@ -157,41 +190,73 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
           if (unit.type === UnitType.SPEARMAN && unit.isCharging) {
             const targetX = unit.side === 'player' ? 750 : 50;
-            unit.isInvulnerable = true;
+            unit.facing = (targetX > unit.x) ? 'right' : 'left';
             const dx = targetX - unit.x;
             if (Math.abs(dx) < 20) {
               unit.isCharging = false;
-              unit.isInvulnerable = false;
             } else {
-              unit.x += (dx > 0 ? 1 : -1) * 350 * deltaTime;
+              unit.x += (dx > 0 ? 1 : -1) * 120 * deltaTime;
               unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+              const nearbyEnemies = newUnits.filter(e => e.side !== unit.side && e.stats.hp > 0 && Math.sqrt(Math.pow(e.x - unit.x, 2) + Math.pow(e.y - unit.y, 2)) < 20);
+              if (nearbyEnemies.length > 0 && nearbyEnemies[0].type !== UnitType.SPEARMAN) {
+                applyChargeDamage(unit, nearbyEnemies[0], 22, 50, '#a855f7', 80, 30);
+              }
               return;
             }
           }
 
           if (unit.type === UnitType.CAVALRY) {
-            if (unit.stamina === undefined) unit.stamina = 0;
-            if (unit.isRunning === undefined) unit.isRunning = false;
+            if (unit.chargeValue === undefined) unit.chargeValue = 100;
+            unit.chargeValue += 10 * deltaTime;
 
-            if (unit.isRunning) {
-              const targetX = unit.side === 'player' ? 780 : 20;
+            const lowestHpEnemy = enemies.length > 0 ? enemies.reduce((prev, curr) => curr.stats.hp < prev.stats.hp ? curr : prev) : null;
+
+            if (unit.chargeValue > 50 && !unit.isCharging && lowestHpEnemy) unit.isCharging = true;
+
+            if (unit.isCharging) {
+              const targetX = lowestHpEnemy ? lowestHpEnemy.x : (unit.side === 'player' ? 750 : 50);
+              const targetY = lowestHpEnemy ? lowestHpEnemy.y : unit.y;
               const dx = targetX - unit.x;
-              if (Math.abs(dx) < 30 || unit.stamina < 10) {
-                unit.isRunning = false;
-              } else {
-                unit.x += (dx > 0 ? 1 : -1) * 200 * deltaTime;
+              const dy = targetY - unit.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+
+              if (dx !== 0) unit.facing = dx > 0 ? 'right' : 'left';
+              const speed = (1 + unit.chargeValue * 0.001) * 150;
+
+              if (dist > 15) {
+                const angle = Math.atan2(dy, dx);
+                unit.x += Math.cos(angle) * speed * deltaTime;
+                unit.y += Math.sin(angle) * speed * deltaTime;
                 unit.walkPhase += 8 * Math.PI * 2 * deltaTime;
-                return;
+
+                const nearbyEnemies = enemies.filter(e => Math.sqrt(Math.pow(e.x - unit.x, 2) + Math.pow(e.y - unit.y, 2)) < 20);
+                if (nearbyEnemies.length > 0) {
+                  applyChargeDamage(unit, nearbyEnemies[0], 15, 40, '#fbbf24', 60, 20);
+                  unit.chargeValue = 10;
+                  unit.isCharging = false;
+                }
+              } else {
+                unit.isCharging = false;
               }
+              unit.x = Math.max(20, Math.min(780, unit.x));
+              unit.y = Math.max(GROUND_TOP + 10, Math.min(GROUND_BOTTOM, unit.y));
+              return;
             }
 
-            if (!unit.isRunning) {
-              unit.stamina += 10 * deltaTime;
-              if (unit.stamina >= 50 && Math.random() < 0.02) {
-                unit.isRunning = true;
+            if (!unit.isCharging && unit.chargeValue <= 50) {
+              const fleeX = unit.side === 'player' ? Math.min(unit.x - 150, 200) : Math.max(unit.x + 150, 600);
+              const dx = fleeX - unit.x;
+              if (dx !== 0) unit.facing = dx > 0 ? 'right' : 'left';
+              if (Math.abs(dx) > 10) {
+                unit.x += (dx > 0 ? 1 : -1) * 60 * deltaTime;
+                unit.walkPhase += 5 * Math.PI * 2 * deltaTime;
               }
+              unit.y = Math.max(GROUND_TOP + 10, Math.min(GROUND_BOTTOM, unit.y));
+              return;
             }
           }
+
+          if (enemies.length === 0) return;
 
           let nearestEnemy: Unit = enemies[0];
           let minDist = Infinity;
@@ -204,7 +269,6 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 
           if (unit.type === UnitType.ARCHER) {
             target = enemies.reduce((prev, curr) => (curr.stats.hp / curr.stats.maxHp < prev.stats.hp / prev.stats.maxHp) ? curr : prev);
-            unit.facing = (target.x > unit.x) ? 'right' : 'left';
 
             const shields = newUnits.filter(u => u.side === unit.side && u.type === UnitType.SWORDSMAN && u.stats.hp > 0);
             if (shields.length > 0) {
@@ -224,15 +288,27 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               const distToSafe = Math.sqrt(Math.pow(unit.x - safeX, 2) + Math.pow(unit.y - safeY, 2));
               if (distToSafe > 10) {
                 const angle = Math.atan2(safeY - unit.y, safeX - unit.x);
+                unit.facing = safeX > unit.x ? 'right' : 'left';
                 unit.x += Math.cos(angle) * unit.stats.speed * 50 * deltaTime;
                 unit.y += Math.sin(angle) * unit.stats.speed * 50 * deltaTime;
                 unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
               }
             } else {
-              const angle = Math.atan2(unit.y - target.y, unit.x - target.x);
-              unit.x += Math.cos(angle) * unit.stats.speed * 30 * deltaTime;
-              unit.y += Math.sin(angle) * unit.stats.speed * 30 * deltaTime;
-              unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+              const nearestDist = Math.sqrt(Math.pow(target.x - unit.x, 2) + Math.pow(target.y - unit.y, 2));
+              if (nearestDist < 100) {
+                const angle = Math.atan2(unit.y - target.y, unit.x - target.x);
+                unit.facing = unit.x > target.x ? 'right' : 'left';
+                unit.x += Math.cos(angle) * unit.stats.speed * 80 * deltaTime;
+                unit.y += Math.sin(angle) * unit.stats.speed * 80 * deltaTime;
+                unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+                unit.isAttacking = false;
+              } else {
+                const angle = Math.atan2(unit.y - target.y, unit.x - target.x);
+                unit.facing = target.x > unit.x ? 'right' : 'left';
+                unit.x += Math.cos(angle) * unit.stats.speed * 30 * deltaTime;
+                unit.y += Math.sin(angle) * unit.stats.speed * 30 * deltaTime;
+                unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+              }
             }
             unit.x = Math.max(20, Math.min(780, unit.x));
             unit.y = Math.max(GROUND_TOP + 15, Math.min(GROUND_BOTTOM, unit.y));
@@ -240,6 +316,7 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             const dist = Math.sqrt(Math.pow(target.x - unit.x, 2) + Math.pow(target.y - unit.y, 2));
             if (dist > unit.stats.range) {
               const angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+              unit.facing = target.x > unit.x ? 'right' : 'left';
               unit.x += Math.cos(angle) * unit.stats.speed * 60 * deltaTime;
               unit.y += Math.sin(angle) * unit.stats.speed * 60 * deltaTime;
               unit.isAttacking = false;
@@ -254,7 +331,7 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             unit.isAttacking = true;
             unit.attackTimer -= deltaTime;
             if (unit.attackTimer <= 0) {
-              unit.attackTimer = ATTACK_COOLDOWN;
+              unit.attackTimer = unit.type === UnitType.SPEARMAN ? 0.5 : ATTACK_COOLDOWN;
               if (!target.isInvulnerable) {
                 audio.playAttack(unit.type === UnitType.ARCHER);
                 const dmg = unit.stats.attack * (1 - target.stats.defense);
@@ -300,21 +377,26 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             }
           } else if (unit.type === UnitType.ARCHER) {
             unit.isAttacking = false;
-            const nearestThreat = enemies.reduce((prev, curr) => {
-              const d1 = Math.sqrt(Math.pow(prev.x - unit.x, 2) + Math.pow(prev.y - unit.y, 2));
-              const d2 = Math.sqrt(Math.pow(curr.x - unit.x, 2) + Math.pow(curr.y - unit.y, 2));
-              return d2 < d1 ? curr : prev;
-            });
-            unit.facing = (nearestThreat.x > unit.x) ? 'right' : 'left';
+            if (enemies.length > 0) {
+              const nearestThreat = enemies.reduce((prev, curr) => {
+                const d1 = Math.sqrt(Math.pow(prev.x - unit.x, 2) + Math.pow(prev.y - unit.y, 2));
+                const d2 = Math.sqrt(Math.pow(curr.x - unit.x, 2) + Math.pow(curr.y - unit.y, 2));
+                return d2 < d1 ? curr : prev;
+              });
+              unit.facing = (nearestThreat.x > unit.x) ? 'right' : 'left';
+            }
           }
 
-          if (unit.type !== UnitType.ARCHER) {
+          if (!unit.isAttacking && unit.type !== UnitType.ARCHER) {
             unit.facing = (target.x > unit.x) ? 'right' : 'left';
           }
         });
 
-        // 碰撞分离：士兵之间保持最小距离
+        // 弹簧碰撞模型：施加弹力到速度，而非直接修改位置
+        const SPRING_K = 800;
+        const DAMPING = 0.85;
         const MIN_DISTANCE = 18;
+
         for (let i = 0; i < newUnits.length; i++) {
           const u1 = newUnits[i];
           if (u1.stats.hp <= 0) continue;
@@ -327,22 +409,52 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             const dist = Math.sqrt(dx * dx + dy * dy);
 
             if (dist < MIN_DISTANCE && dist > 0) {
-              const overlap = (MIN_DISTANCE - dist) / 2;
+              const overlap = MIN_DISTANCE - dist;
               const nx = dx / dist;
               const ny = dy / dist;
 
-              u1.x -= nx * overlap;
-              u1.y -= ny * overlap;
-              u2.x += nx * overlap;
-              u2.y += ny * overlap;
-
-              u1.x = Math.max(15, Math.min(785, u1.x));
-              u1.y = Math.max(GROUND_TOP + 10, Math.min(GROUND_BOTTOM, u1.y));
-              u2.x = Math.max(15, Math.min(785, u2.x));
-              u2.y = Math.max(GROUND_TOP + 10, Math.min(GROUND_BOTTOM, u2.y));
+              const force = overlap * SPRING_K;
+              u1.vx -= nx * force * deltaTime;
+              u1.vy -= ny * force * deltaTime;
+              u2.vx += nx * force * deltaTime;
+              u2.vy += ny * force * deltaTime;
             }
           }
         }
+
+        // 边界弹簧力
+        const BOUNDARY_SPRING_K = 600;
+        const BOUNDARY_BUFFER = 5;
+        newUnits.forEach(u => {
+          if (u.stats.hp <= 0) return;
+
+          if (u.x < 15 + BOUNDARY_BUFFER) {
+            u.vx += (15 + BOUNDARY_BUFFER - u.x) * BOUNDARY_SPRING_K * deltaTime;
+          }
+          if (u.x > 785 - BOUNDARY_BUFFER) {
+            u.vx -= (u.x - (785 - BOUNDARY_BUFFER)) * BOUNDARY_SPRING_K * deltaTime;
+          }
+          if (u.y < GROUND_TOP + 10 + BOUNDARY_BUFFER) {
+            u.vy += (GROUND_TOP + 10 + BOUNDARY_BUFFER - u.y) * BOUNDARY_SPRING_K * deltaTime;
+          }
+          if (u.y > GROUND_BOTTOM - BOUNDARY_BUFFER) {
+            u.vy -= (u.y - (GROUND_BOTTOM - BOUNDARY_BUFFER)) * BOUNDARY_SPRING_K * deltaTime;
+          }
+        });
+
+        // 应用阻尼和更新位置
+        newUnits.forEach(u => {
+          if (u.stats.hp <= 0) return;
+
+          u.vx *= DAMPING;
+          u.vy *= DAMPING;
+
+          u.x += u.vx * deltaTime;
+          u.y += u.vy * deltaTime;
+
+          u.x = Math.max(15, Math.min(785, u.x));
+          u.y = Math.max(GROUND_TOP + 10, Math.min(GROUND_BOTTOM, u.y));
+        });
 
         return newUnits.filter(u => u.stats.hp > 0 || u.isInvulnerable);
       });
@@ -399,44 +511,7 @@ const TestMode: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         ctx.restore();
       }
 
-      const isActuallyMoving = unit.prevX !== unit.x || unit.prevY !== unit.y;
-      const attackProgress = unit.isAttacking ? 1 - (unit.attackTimer / ATTACK_COOLDOWN) : 0;
-      const flip = unit.facing === 'left' ? -1 : 1;
-
-      ctx.save();
-      ctx.translate(unit.x, unit.y);
-      ctx.scale(flip, 1);
-
-      const colors = {
-        player: { main: '#3b82f6', dark: '#1e40af' },
-        enemy: { main: '#ef4444', dark: '#b91c1c' }
-      };
-      const team = unit.side === 'player' ? colors.player : colors.enemy;
-
-      ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      ctx.beginPath();
-      ctx.ellipse(0, 10, 8, 3, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      drawUnitOnCanvas(ctx, unit.type, 0, 0, 1, team, unit.isAttacking, unit.walkPhase, attackProgress, isActuallyMoving);
-
-      ctx.restore();
-
-      if (!unit.isInvulnerable) {
-        const hpPercent = Math.max(0, unit.stats.hp / unit.stats.maxHp);
-        const barWidth = 18;
-        const barHeight = 3;
-
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(unit.x - barWidth / 2, unit.y - 22, barWidth, barHeight);
-
-        let hpColor = '#22c55e';
-        if (hpPercent < 0.3) hpColor = '#ef4444';
-        else if (hpPercent < 0.6) hpColor = '#eab308';
-
-        ctx.fillStyle = hpColor;
-        ctx.fillRect(unit.x - barWidth / 2, unit.y - 22, barWidth * hpPercent, barHeight);
-      }
+      drawUnit(ctx, unit);
     });
 
     effectsRef.current.forEach(e => {

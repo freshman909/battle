@@ -1,0 +1,139 @@
+---
+name: excel-reader
+description: 当用户提到读取Excel文件、查看配置数据、单位数据、兵种数值，或者需要获取游戏数值配置时，使用此技能。会自动检测环境、创建转换脚本（如需要）、同步数据。只要用户提到Excel、配置表、数据表，或询问单位属性、兵种数值，一定要使用此技能。
+---
+
+# Excel Reader - Excel 文件读取技能
+
+## 工作流程
+
+### 第一步：检查转换脚本是否存在
+
+```bash
+# 检查项目是否有现成的转换脚本
+ls scripts/excel-to-json.js
+```
+
+**如果不存在** → 创建转换脚本：
+
+```javascript
+// 保存到 scripts/excel-to-json.js
+import XLSX from 'xlsx';
+import fs from 'fs';
+import path from 'path';
+
+const EXCEL_FILE = process.argv[2] || 'data.xlsx';
+const OUTPUT_JSON = process.argv[3] || 'output.json';
+
+try {
+  const workbook = XLSX.readFile(EXCEL_FILE);
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(sheet);
+  
+  if (data.length === 0) {
+    console.error('Excel 文件为空');
+    process.exit(1);
+  }
+  
+  // 自动获取所有列名
+  const columns = Object.keys(data[0]);
+  const keyColumn = columns.find(col => col.includes('类型') || col.includes('名称'));
+  const valueColumns = columns.filter(col => col !== keyColumn);
+  
+  console.log('检测到列:', columns.join(', '));
+  console.log('主键列:', keyColumn);
+  console.log('数据行数:', data.length);
+  
+  // 转换为对象格式（保留所有列）
+  const result = {};
+  
+  data.forEach(row => {
+    const key = row[keyColumn];
+    if (!key) return;
+    
+    const entry = {};
+    valueColumns.forEach(col => {
+      let value = row[col];
+      
+      // 自动类型转换
+      if (typeof value === 'string') {
+        const num = Number(value);
+        if (!isNaN(num)) {
+          value = num;
+        } else if (value.includes(',')) {
+          value = value.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+      
+      entry[col] = value;
+    });
+    
+    result[key] = entry;
+  });
+  
+  // 保存 JSON
+  fs.writeFileSync(OUTPUT_JSON, JSON.stringify(result, null, 2));
+  
+  // 同步 Excel 时间戳到 JSON 文件
+  const excelStat = fs.statSync(EXCEL_FILE);
+  fs.utimesSync(OUTPUT_JSON, excelStat.atime, excelStat.mtime);
+  
+  console.log('✅ 转换完成！');
+  console.log('📄 输出文件:', OUTPUT_JSON);
+  console.log('📊 数据数量:', Object.keys(result).length);
+  
+} catch (error) {
+  console.error('❌ 转换失败:', error.message);
+  process.exit(1);
+}
+```
+
+### 第二步：检查 JSON 缓存
+
+```bash
+# 检查是否存在 units.json（或其他输出文件）
+ls units.json
+```
+
+**如果不存在** → 运行转换脚本：
+
+```bash
+node scripts/excel-to-json.js 士兵数据配置.xlsx units.json
+```
+
+**如果存在** → 检查是否需要更新：
+
+```bash
+# 比较文件修改时间（Windows PowerShell）
+$excelTime = (Get-Item "士兵数据配置.xlsx").LastWriteTime
+$jsonTime = (Get-Item "units.json").LastWriteTime
+if ($excelTime -gt $jsonTime) { 
+  Write-Host "Excel 已被修改，需要重新转换"
+  node scripts/excel-to-json.js 士兵数据配置.xlsx units.json
+} else { 
+  Write-Host "缓存有效，直接读取"
+}
+```
+
+### 第三步：读取 JSON 文件
+
+直接读取生成的 JSON 文件，所有数据以 **最新 Excel 内容为准**。
+
+## 特殊情况处理
+
+遇到以下情况时，**向用户提问**后再操作：
+
+| 情况 | 提问内容 |
+|------|---------|
+| 多个 Excel 文件 | "检测到多个 Excel 文件，请指定要读取哪一个？" |
+| Excel 有多个工作表 | "Excel 有多个工作表，请指定要读取哪一个？" |
+| 字段名不清晰 | "检测到列名：xxx，请确认哪个列是主键？" |
+| 转换脚本报错 | "转换失败，错误信息：xxx，请确认 Excel 格式是否正确？" |
+| 数据量异常 | "Excel 只有 1 行数据（或超过 1000 行），是否正常？" |
+
+## 注意事项
+
+1. **数据以最新 Excel 为准** - 每次读取前必须检查时间戳，确保 JSON 是最新的
+2. **同步时间戳** - 转换完成后，JSON 文件的修改时间应与 Excel 一致
+3. **不写死字段** - 脚本自动检测所有列名，支持任意结构的 Excel
+4. **优先使用脚本** - 如果项目已有转换脚本，直接使用；没有则创建

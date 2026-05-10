@@ -27,7 +27,7 @@ const PostBattle: React.FC<PostBattleProps> = ({ score, level, diamonds, stats, 
   const types = [UnitType.SWORDSMAN, UnitType.SPEARMAN, UnitType.CAVALRY, UnitType.ARCHER];
 
   return (
-    <div className="flex flex-col items-center justify-center gap-6 z-20 p-8 bg-black/90 hand-drawn-border max-w-2xl w-full text-center">
+    <div className="flex flex-col items-center justify-center gap-6 z-20 p-8 bg-black/90 hand-drawn-border max-w-2xl w-full text-center" style={{ height: '700px' }}>
       <h2 className={`text-4xl ${isVictory ? 'text-yellow-400' : 'text-red-500'} pixel-text-shadow font-bold italic`}>
         {isVictory ? '大获全胜!' : '全军覆没!'}
       </h2>

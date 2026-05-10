@@ -1,0 +1,87 @@
+---
+name: excel-config
+description: 当需要读取游戏配置数据（兵种数值、行为逻辑等）时，使用此技能。包含 Excel 读取的最佳实践和本项目具体流程。
+---
+
+# Excel 配置读取技能
+
+## 通用经验
+
+### 读取 Excel 的标准流程
+
+1. **安装依赖**：
+```bash
+npm install xlsx
+```
+
+2. **使用转换脚本**：
+项目已有 `scripts/excel-to-json.js`，直接使用：
+```bash
+node scripts/excel-to-json.js 士兵数据配置.xlsx units.json
+```
+
+3. **检查缓存更新**：
+比较 Excel 和 JSON 的时间戳，Excel 更新则重新转换：
+```bash
+$excelTime = (Get-Item "士兵数据配置.xlsx").LastWriteTime
+$jsonTime = (Get-Item "units.json").LastWriteTime
+if ($excelTime -gt $jsonTime) { 
+  node scripts/excel-to-json.js 士兵数据配置.xlsx units.json
+}
+```
+
+4. **同步时间戳**：
+转换完成后，同步 JSON 文件时间戳与 Excel 一致：
+```bash
+node -e "const fs=require('fs');const e=fs.statSync('士兵数据配置.xlsx');fs.utimesSync('units.json',e.atime,e.mtime);"
+```
+
+## 本项目具体经验
+
+### 终端命令执行
+
+**Windows 环境注意事项：**
+- 使用 `node` 命令时，确保在正确的 cwd 下执行
+- 中文路径可能需要特殊处理
+- 如果 `trae-sandbox` 报错，尝试直接使用 `node` 命令
+
+### Excel 数据结构
+
+**当前项目结构：**
+```
+e:\1\个人作品集\游戏制作\battle\士兵数据配置.xlsx
+```
+
+**转换脚本位置：**
+```
+e:\1\个人作品集\游戏制作\battle\scripts\excel-to-json.js
+```
+
+**输出文件：**
+```
+e:\1\个人作品集\游戏制作\battle\units.json
+```
+
+### 数据字段映射
+
+Excel 列名 → 代码字段：
+| Excel 列名 | 代码使用 |
+|-----------|---------|
+| 单位类型 | 主键 |
+| 生命值 (HP) | stats.hp / stats.maxHp |
+| 攻击力 (ATK) | stats.attack |
+| 防御力 (DEF) | stats.defense |
+| 攻击速度 (秒/次) | 用于计算 attackTimer |
+| 移动速度 (像素/秒) | stats.speed |
+| 攻击范围 (像素) | stats.range |
+| 颜色 | 配色方案 |
+| 特殊标签 | 行为特征 |
+| 行为逻辑 | 实现代码逻辑 |
+
+## 常见问题
+
+| 问题 | 解决方案 |
+|------|---------|
+| `require is not defined` | 使用 `import` 语法 |
+| 中文路径报错 | 确保编码正确，或使用相对路径 |
+| 终端无法执行 | 检查 cwd，确保在正确目录 |

@@ -4,7 +4,7 @@ import { UnitType, Unit, UnitStats, BattleStats } from '../types';
 import { UNIT_CONFIGS, UNIT_COLORS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 import { audio } from '../utils/audio';
-import { drawUnitOnCanvas } from '../utils/unitDrawer';
+import { drawUnit, drawUnitOnCanvas } from '../utils/unitDrawer';
 
 interface VisualEffect {
   id: string;
@@ -58,6 +58,12 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
   const requestRef = useRef<number>();
   const lastTimeRef = useRef<number>();
 
+  const dist = (x1: number, y1: number, x2: number, y2: number) => Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+  const clampX = (x: number) => Math.max(20, Math.min(780, x));
+  const clampY = (y: number) => Math.max(GROUND_TOP + 10, Math.min(GROUND_BOTTOM, y));
+  const getNearbyEnemies = (enemies: Unit[], x: number, y: number, radius: number) =>
+    enemies.filter(e => dist(e.x, e.y, x, y) < radius);
+
   const initBattle = useCallback(() => {
     const spawnedUnits: Unit[] = [];
     const width = 800;
@@ -95,8 +101,9 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
         walkPhase: Math.random() * Math.PI * 2,
         prevX: 0,
         prevY: 0,
-        stamina: type === UnitType.CAVALRY ? 0 : undefined,
-        isRunning: type === UnitType.CAVALRY ? false : undefined,
+        vx: 0,
+        vy: 0,
+        chargeValue: type === UnitType.CAVALRY ? 100 : undefined,
       });
     });
 
@@ -125,8 +132,9 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
         walkPhase: Math.random() * Math.PI * 2,
         prevX: 0,
         prevY: 0,
-        stamina: type === UnitType.CAVALRY ? 0 : undefined,
-        isRunning: type === UnitType.CAVALRY ? false : undefined,
+        vx: 0,
+        vy: 0,
+        chargeValue: type === UnitType.CAVALRY ? 100 : undefined,
       });
     }
 
@@ -146,6 +154,39 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
   }, [playerUnits, level, upgrades]);
 
   useEffect(() => { initBattle(); }, [initBattle]);
+
+  const applyChargeDamage = useCallback((
+    unit: Unit,
+    target: Unit,
+    baseDamage: number,
+    knockback: number,
+    particleColor: string,
+    particleSpeed: number,
+    particleVyOffset: number
+  ) => {
+    if (target.isInvulnerable) return;
+    
+    const knockbackDir = unit.side === 'player' ? 1 : -1;
+    target.x += knockbackDir * knockback;
+    const chargeDmg = Math.floor(baseDamage * (1 - target.stats.defense));
+    target.stats.hp -= chargeDmg;
+    if (unit.side === 'player') statsRef.current.dealt[unit.type] += chargeDmg;
+    else statsRef.current.taken[target.type] += chargeDmg;
+    effectsRef.current.push({
+      id: uuidv4(), x: target.x, y: target.y - 20,
+      type: 'damage', life: 1, value: chargeDmg, isCrit: true
+    });
+    for (let i = 0; i < 6; i++) {
+      const pa = (Math.random() - 0.5) * Math.PI;
+      const sp = particleSpeed + Math.random() * (particleSpeed * 0.5);
+      effectsRef.current.push({
+        id: uuidv4(), x: target.x, y: target.y - 10,
+        type: 'particle', life: 0.4,
+        vx: Math.cos(pa) * sp, vy: Math.sin(pa) * sp - particleVyOffset,
+        size: 2 + Math.random() * 3, color: particleColor
+      });
+    }
+  }, []);
 
   const update = useCallback((time: number) => {
     if (lastTimeRef.current !== undefined) {
@@ -199,66 +240,106 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
             }
           }
 
-          if (unit.type === UnitType.CAVALRY) {
-            if (unit.stamina === undefined) unit.stamina = 0;
-            if (unit.isRunning === undefined) unit.isRunning = false;
-
-            if (unit.isRunning) {
+          if (unit.type === UnitType.SPEARMAN) {
+            if (unit.isCharging) {
               const targetX = unit.side === 'player' ? 780 : 20;
               const dx = targetX - unit.x;
-              if (Math.abs(dx) < 30 || unit.stamina < 10) {
-                unit.isRunning = false;
+              unit.facing = dx > 0 ? 'right' : 'left';
+              if (Math.abs(dx) < 30) {
+                unit.isCharging = false;
               } else {
-                unit.x += (dx > 0 ? 1 : -1) * 200 * deltaTime;
+                const speed = (1 + unit.chargeValue * 0.001) * 120;
+                unit.x += (dx > 0 ? 1 : -1) * speed * deltaTime;
                 unit.walkPhase += 8 * Math.PI * 2 * deltaTime;
-                if (!ghostTrailsRef.current[unit.id]) ghostTrailsRef.current[unit.id] = [];
-                ghostTrailsRef.current[unit.id].unshift({ x: unit.x, y: unit.y, alpha: 0.5 });
-                if (ghostTrailsRef.current[unit.id].length > 6) ghostTrailsRef.current[unit.id].pop();
 
-                const nearbyEnemies = enemies.filter(e => {
-                  const d = Math.sqrt(Math.pow(e.x - unit.x, 2) + Math.pow(e.y - unit.y, 2));
-                  return d < 25;
-                });
-                if (nearbyEnemies.length > 0 && !nearbyEnemies[0].isInvulnerable) {
-                  const target = nearbyEnemies[0];
-                  const knockback = unit.side === 'player' ? 40 : -40;
-                  target.x += knockback;
-                  const chargeDmg = Math.floor(10 + unit.stamina * 0.5);
-                  target.stats.hp -= chargeDmg;
-                  if (unit.side === 'player') statsRef.current.dealt[unit.type] += chargeDmg;
-                  else statsRef.current.taken[target.type] += chargeDmg;
-                  effectsRef.current.push({
-                    id: uuidv4(), x: target.x, y: target.y - 20,
-                    type: 'damage', life: 1, value: chargeDmg, isCrit: true
-                  });
-                  for (let i = 0; i < 6; i++) {
-                    const pa = (Math.random() - 0.5) * Math.PI;
-                    const sp = 60 + Math.random() * 120;
-                    effectsRef.current.push({
-                      id: uuidv4(), x: target.x, y: target.y - 10,
-                      type: 'particle', life: 0.4,
-                      vx: Math.cos(pa) * sp, vy: Math.sin(pa) * sp - 20,
-                      size: 2 + Math.random() * 3, color: '#fbbf24'
-                    });
-                  }
-                  unit.stamina = Math.max(10, unit.stamina - 20);
+                const nearbyEnemies = getNearbyEnemies(enemies, unit.x, unit.y, 20);
+                if (nearbyEnemies.length > 0 && nearbyEnemies[0].type !== UnitType.SPEARMAN) {
+                  applyChargeDamage(unit, nearbyEnemies[0], 22, 50, '#a855f7', 80, 30);
                 }
                 return;
               }
             }
+          }
 
-            if (!unit.isRunning) {
-              unit.stamina += 10 * deltaTime;
-              if (unit.stamina >= 50 && Math.random() < 0.02) {
-                unit.isRunning = true;
+          if (unit.type === UnitType.CAVALRY) {
+            if (unit.chargeValue === undefined) unit.chargeValue = 100;
+
+            unit.chargeValue += 10 * deltaTime;
+
+            const lowestHpEnemy = enemies.length > 0 ? enemies.reduce((prev, curr) => {
+              return curr.stats.hp < prev.stats.hp ? curr : prev;
+            }) : null;
+
+            if (unit.chargeValue > 50 && !unit.isCharging && lowestHpEnemy) {
+              unit.isCharging = true;
+            }
+
+            if (unit.isCharging) {
+              const targetX = lowestHpEnemy ? lowestHpEnemy.x : (unit.side === 'player' ? 780 : 20);
+              const targetY = lowestHpEnemy ? lowestHpEnemy.y : unit.y;
+              const dx = targetX - unit.x;
+              const dy = targetY - unit.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+
+              if (dx !== 0) unit.facing = dx > 0 ? 'right' : 'left';
+
+              const speedBoost = 1 + unit.chargeValue * 0.001;
+              const speed = speedBoost * 150;
+
+              if (dist > 15) {
+                const angle = Math.atan2(dy, dx);
+                unit.x += Math.cos(angle) * speed * deltaTime;
+                unit.y += Math.sin(angle) * speed * deltaTime;
+                unit.walkPhase += 8 * Math.PI * 2 * deltaTime;
+
+                if (!ghostTrailsRef.current[unit.id]) ghostTrailsRef.current[unit.id] = [];
+                ghostTrailsRef.current[unit.id].unshift({ x: unit.x, y: unit.y, alpha: 0.5 });
+                if (ghostTrailsRef.current[unit.id].length > 6) ghostTrailsRef.current[unit.id].pop();
+
+                const nearbyEnemies = getNearbyEnemies(enemies, unit.x, unit.y, 20);
+                if (nearbyEnemies.length > 0) {
+                  applyChargeDamage(unit, nearbyEnemies[0], 15, 40, '#fbbf24', 60, 20);
+                  unit.chargeValue = 10;
+                  unit.isCharging = false;
+                }
+              } else {
+                unit.isCharging = false;
               }
+
+              unit.x = clampX(unit.x);
+              unit.y = clampY(unit.y);
+              return;
+            }
+
+            if (!unit.isCharging && unit.chargeValue <= 50) {
+              if (enemies.length === 0) return;
+              const nearestEnemy = enemies.reduce((prev, curr) => {
+                const d1 = dist(prev.x, prev.y, unit.x, unit.y);
+                const d2 = dist(curr.x, curr.y, unit.x, unit.y);
+                return d2 < d1 ? curr : prev;
+              });
+              const fleeDist = 150;
+              const fleeX = unit.side === 'player' 
+                ? Math.min(unit.x - fleeDist, 200)
+                : Math.max(unit.x + fleeDist, 600);
+              const dx = fleeX - unit.x;
+              const fleeDistAbs = Math.abs(dx);
+              if (dx !== 0) unit.facing = dx > 0 ? 'right' : 'left';
+              if (fleeDistAbs > 10) {
+                unit.x += (dx > 0 ? 1 : -1) * 60 * deltaTime;
+                unit.walkPhase += 5 * Math.PI * 2 * deltaTime;
+              }
+              unit.y = clampY(unit.y);
+              return;
             }
           }
+
+          if (enemies.length === 0) return;
 
           let nearestEnemy: Unit = enemies[0];
           let minDist = Infinity;
           enemies.forEach(e => {
-            const d = Math.sqrt(Math.pow(e.x - unit.x, 2) + Math.pow(e.y - unit.y, 2));
+            const d = dist(e.x, e.y, unit.x, unit.y);
             if (d < minDist) { minDist = d; nearestEnemy = e; }
           });
 
@@ -266,7 +347,6 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
 
           if (unit.type === UnitType.ARCHER) {
             target = enemies.reduce((prev, curr) => (curr.stats.hp / curr.stats.maxHp < prev.stats.hp / prev.stats.maxHp) ? curr : prev);
-            unit.facing = (target.x > unit.x) ? 'right' : 'left';
             
             const shields = newUnits.filter(u => u.side === unit.side && u.type === UnitType.SWORDSMAN && u.stats.hp > 0);
             if (shields.length > 0) {
@@ -284,25 +364,38 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
               const safeX = nearestShield.x + (vx / vMag) * 50;
               const safeY = nearestShield.y + (vy / vMag) * 50;
 
-              const distToSafe = Math.sqrt(Math.pow(unit.x - safeX, 2) + Math.pow(unit.y - safeY, 2));
+              const distToSafe = dist(unit.x, unit.y, safeX, safeY);
               if (distToSafe > 10) {
                 const angle = Math.atan2(safeY - unit.y, safeX - unit.x);
+                unit.facing = safeX > unit.x ? 'right' : 'left';
                 unit.x += Math.cos(angle) * unit.stats.speed * 50 * deltaTime;
                 unit.y += Math.sin(angle) * unit.stats.speed * 50 * deltaTime;
                 unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
               }
             } else {
-              const angle = Math.atan2(unit.y - target.y, unit.x - target.x);
-              unit.x += Math.cos(angle) * unit.stats.speed * 30 * deltaTime;
-              unit.y += Math.sin(angle) * unit.stats.speed * 30 * deltaTime;
-              unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+              const nearestDist = dist(unit.x, unit.y, target.x, target.y);
+              if (nearestDist < 100) {
+                const angle = Math.atan2(unit.y - target.y, unit.x - target.x);
+                unit.facing = unit.x > target.x ? 'right' : 'left';
+                unit.x += Math.cos(angle) * unit.stats.speed * 80 * deltaTime;
+                unit.y += Math.sin(angle) * unit.stats.speed * 80 * deltaTime;
+                unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+                unit.isAttacking = false;
+              } else {
+                const angle = Math.atan2(unit.y - target.y, unit.x - target.x);
+                unit.facing = target.x > unit.x ? 'right' : 'left';
+                unit.x += Math.cos(angle) * unit.stats.speed * 30 * deltaTime;
+                unit.y += Math.sin(angle) * unit.stats.speed * 30 * deltaTime;
+                unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+              }
             }
-            unit.x = Math.max(20, Math.min(780, unit.x));
+            unit.x = clampX(unit.x);
             unit.y = Math.max(GROUND_TOP + 15, Math.min(GROUND_BOTTOM, unit.y));
           } else {
-            const dist = Math.sqrt(Math.pow(target.x - unit.x, 2) + Math.pow(target.y - unit.y, 2));
-            if (dist > unit.stats.range) {
+            const targetDist = dist(unit.x, unit.y, target.x, target.y);
+            if (targetDist > unit.stats.range) {
               const angle = Math.atan2(target.y - unit.y, target.x - unit.x);
+              unit.facing = target.x > unit.x ? 'right' : 'left';
               unit.x += Math.cos(angle) * unit.stats.speed * 60 * deltaTime;
               unit.y += Math.sin(angle) * unit.stats.speed * 60 * deltaTime;
               unit.isAttacking = false;
@@ -317,7 +410,8 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
             unit.isAttacking = true;
             unit.attackTimer -= deltaTime;
             if (unit.attackTimer <= 0) {
-              unit.attackTimer = ATTACK_COOLDOWN;
+              const cooldown = unit.type === UnitType.SPEARMAN ? 0.5 : ATTACK_COOLDOWN;
+              unit.attackTimer = cooldown;
               if (!target.isInvulnerable) {
                 audio.playAttack(unit.type === UnitType.ARCHER);
                 const dmg = unit.stats.attack * (1 - target.stats.defense);
@@ -326,6 +420,19 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
                 if (unit.side === 'player') statsRef.current.dealt[unit.type] += dmg;
                 else statsRef.current.taken[target.type] += dmg;
                 audio.playHit();
+                
+                // 矛兵突刺特效
+                if (unit.type === UnitType.SPEARMAN) {
+                  const thrustDist = unit.side === 'player' ? 10 : -10;
+                  target.x += thrustDist * 0.5;
+                  effectsRef.current.push({
+                    id: uuidv4(), x: target.x, y: target.y - 10,
+                    type: 'particle', life: 0.3,
+                    vx: (unit.side === 'player' ? 1 : -1) * 100,
+                    vy: -30,
+                    size: 4, color: '#f87171'
+                  });
+                }
                 
                 const angle = Math.atan2(target.y - unit.y, target.x - unit.x);
                 if (unit.type === UnitType.ARCHER) {
@@ -365,12 +472,14 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
             }
           } else if (unit.type === UnitType.ARCHER) {
             unit.isAttacking = false;
-            const nearestThreat = enemies.reduce((prev, curr) => {
-              const d1 = Math.sqrt(Math.pow(prev.x - unit.x, 2) + Math.pow(prev.y - unit.y, 2));
-              const d2 = Math.sqrt(Math.pow(curr.x - unit.x, 2) + Math.pow(curr.y - unit.y, 2));
-              return d2 < d1 ? curr : prev;
-            });
-            unit.facing = (nearestThreat.x > unit.x) ? 'right' : 'left';
+            if (enemies.length > 0) {
+              const nearestThreat = enemies.reduce((prev, curr) => {
+                const d1 = dist(prev.x, prev.y, unit.x, unit.y);
+                const d2 = dist(curr.x, curr.y, unit.x, unit.y);
+                return d2 < d1 ? curr : prev;
+              });
+              unit.facing = (nearestThreat.x > unit.x) ? 'right' : 'left';
+            }
           }
 
           if (unit.type !== UnitType.ARCHER) {
@@ -378,8 +487,11 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
           }
         });
 
-        // 碰撞分离：士兵之间保持最小距离
+        // 弹簧碰撞模型：施加弹力到速度，而非直接修改位置
+        const SPRING_K = 800;
+        const DAMPING = 0.85;
         const MIN_DISTANCE = 18;
+
         for (let i = 0; i < newUnits.length; i++) {
           const u1 = newUnits[i];
           if (u1.stats.hp <= 0) continue;
@@ -389,25 +501,54 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
 
             const dx = u2.x - u1.x;
             const dy = u2.y - u1.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const d = Math.sqrt(dx * dx + dy * dy);
 
-            if (dist < MIN_DISTANCE && dist > 0) {
-              const overlap = (MIN_DISTANCE - dist) / 2;
-              const nx = dx / dist;
-              const ny = dy / dist;
-
-              u1.x -= nx * overlap;
-              u1.y -= ny * overlap;
-              u2.x += nx * overlap;
-              u2.y += ny * overlap;
-
-              u1.x = Math.max(15, Math.min(785, u1.x));
-              u1.y = Math.max(GROUND_TOP + 10, Math.min(GROUND_BOTTOM, u1.y));
-              u2.x = Math.max(15, Math.min(785, u2.x));
-              u2.y = Math.max(GROUND_TOP + 10, Math.min(GROUND_BOTTOM, u2.y));
+            if (d < MIN_DISTANCE && d > 0) {
+              const overlap = MIN_DISTANCE - d;
+              const nx = dx / d;
+              const ny = dy / d;
+              const force = overlap * SPRING_K;
+              u1.vx -= nx * force * deltaTime;
+              u1.vy -= ny * force * deltaTime;
+              u2.vx += nx * force * deltaTime;
+              u2.vy += ny * force * deltaTime;
             }
           }
         }
+
+        // 边界弹簧力
+        const BOUNDARY_SPRING_K = 600;
+        const BOUNDARY_BUFFER = 5;
+        newUnits.forEach(u => {
+          if (u.stats.hp <= 0) return;
+
+          if (u.x < 15 + BOUNDARY_BUFFER) {
+            u.vx += (15 + BOUNDARY_BUFFER - u.x) * BOUNDARY_SPRING_K * deltaTime;
+          }
+          if (u.x > 785 - BOUNDARY_BUFFER) {
+            u.vx -= (u.x - (785 - BOUNDARY_BUFFER)) * BOUNDARY_SPRING_K * deltaTime;
+          }
+          if (u.y < GROUND_TOP + 10 + BOUNDARY_BUFFER) {
+            u.vy += (GROUND_TOP + 10 + BOUNDARY_BUFFER - u.y) * BOUNDARY_SPRING_K * deltaTime;
+          }
+          if (u.y > GROUND_BOTTOM - BOUNDARY_BUFFER) {
+            u.vy -= (u.y - (GROUND_BOTTOM - BOUNDARY_BUFFER)) * BOUNDARY_SPRING_K * deltaTime;
+          }
+        });
+
+        // 应用阻尼和更新位置
+        newUnits.forEach(u => {
+          if (u.stats.hp <= 0) return;
+
+          u.vx *= DAMPING;
+          u.vy *= DAMPING;
+
+          u.x += u.vx * deltaTime;
+          u.y += u.vy * deltaTime;
+
+          u.x = clampX(u.x);
+          u.y = clampY(u.y);
+        });
 
         Object.keys(ghostTrailsRef.current).forEach(id => {
           ghostTrailsRef.current[id] = ghostTrailsRef.current[id].map(f => ({ ...f, alpha: f.alpha - deltaTime * 4 })).filter(f => f.alpha > 0);
@@ -424,54 +565,6 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
     requestRef.current = requestAnimationFrame(update);
     return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
   }, [update]);
-
-  // 绘制deepseek风格士兵（含行走动画和攻击进度）
-  const drawUnit = (ctx: CanvasRenderingContext2D, unit: Unit) => {
-    const isActuallyMoving = unit.prevX !== unit.x || unit.prevY !== unit.y;
-    const attackProgress = unit.isAttacking ? 1 - (unit.attackTimer / ATTACK_COOLDOWN) : 0;
-    const flip = unit.facing === 'left' ? -1 : 1;
-    
-    ctx.save();
-    ctx.translate(unit.x, unit.y);
-    ctx.scale(flip, 1);
-
-    const colors = {
-      player: { main: '#3b82f6', dark: '#1e40af' },
-      enemy: { main: '#ef4444', dark: '#b91c1c' }
-    };
-    const team = unit.side === 'player' ? colors.player : colors.enemy;
-
-    // 阴影
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.beginPath();
-    ctx.ellipse(0, 10, 8, 3, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    drawUnitOnCanvas(ctx, unit.type, 0, 0, 1, team, unit.isAttacking, unit.walkPhase, attackProgress, isActuallyMoving);
-
-    ctx.restore();
-
-    if (!unit.isInvulnerable) {
-      drawHealthBar(ctx, unit);
-    }
-  };
-
-  // 血条
-  const drawHealthBar = (ctx: CanvasRenderingContext2D, unit: Unit) => {
-    const hpPercent = Math.max(0, unit.stats.hp / unit.stats.maxHp);
-    const barWidth = 18;
-    const barHeight = 3;
-    
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(unit.x - barWidth/2, unit.y - 22, barWidth, barHeight);
-    
-    let hpColor = '#22c55e';
-    if (hpPercent < 0.3) hpColor = '#ef4444';
-    else if (hpPercent < 0.6) hpColor = '#eab308';
-    
-    ctx.fillStyle = hpColor;
-    ctx.fillRect(unit.x - barWidth/2, unit.y - 22, barWidth * hpPercent, barHeight);
-  };
 
   // 战场背景
   const drawBackground = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {

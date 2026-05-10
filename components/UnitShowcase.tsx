@@ -3,12 +3,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { UnitType } from '../types';
 import { UNIT_CONFIGS, UNIT_COLORS } from '../constants';
 import { audio } from '../utils/audio';
-import { drawUnitOnCanvas } from '../utils/unitDrawer';
+import { drawUnitShowcase } from '../utils/unitDrawer';
 
 const unitDetails = {
   [UnitType.ARCHER]: {
     name: '弓箭手',
-    features: '远程狙击：优先攻击血量最低的敌人。警惕性强：当敌人靠近时会优先防身，并主动躲在盾兵后方。',
+    features: '远程狙击：优先攻击血量最低的敌人。警惕性强：当战场上存在剑盾兵时，会躲在剑盾兵后方进行安全输出。战术规避：当不存在剑盾兵保护时，会远离敌人（距离≥100）后再进行攻击。',
     freq: '1.2s'
   },
   [UnitType.SWORDSMAN]: {
@@ -18,13 +18,13 @@ const unitDetails = {
   },
   [UnitType.SPEARMAN]: {
     name: '矛兵',
-    features: '毁灭冲锋：战斗开始时以极快速度冲向敌后。无畏打击：冲锋期间进入无敌状态，造成高额瞬间伤害。',
-    freq: '1.2s'
+    features: '毁灭冲锋：战斗开始时以极快速度冲向敌方后排，撞飞途中敌人。无畏打击：冲锋时对非矛兵单位造成高额伤害并击退。',
+    freq: '0.5s'
   },
   [UnitType.CAVALRY]: {
     name: '骑兵',
-    features: '高速冲刺：积累奔跑值后发动冲锋，附带击退效果。爆发伤害：奔跑值越高，冲撞伤害越高。',
-    freq: '1.2s'
+    features: '奔跑值系统：开局奔跑值100，自动冲锋。击退冲锋：冲锋时击退路径上的敌人，造成高额伤害。战术撤退：奔跑值≤50时远离敌人积累奔跑值，>50时优先攻击血量最低敌人。',
+    freq: '-'
   },
   [UnitType.BLANK]: { name: '', features: '', freq: '' }
 };
@@ -73,7 +73,7 @@ const UnitShowcase: React.FC<{ onBack: () => void }> = ({ onBack }) => {
     }
 
     // 绘制deepseek风格士兵
-    drawUnitOnCanvas(ctx, current, 100, 110, 3);
+    drawUnitShowcase(ctx, current, 100, 110, 3);
 
     // 绘制装饰边框 - 科技感
     ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)';

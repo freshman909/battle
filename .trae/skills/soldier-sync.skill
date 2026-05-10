@@ -1,0 +1,125 @@
+---
+name: soldier-sync
+description: 当用户修改士兵/单位的行为逻辑、外观颜色、攻击动画时，使用此技能。确保 Battlefield、TestMode、UnitShowcase 三个部分同步修改，避免不一致。
+---
+
+# 士兵系统同步修改技能
+
+## 核心原则
+
+**修改士兵的行为逻辑或形象时，必须同步修改以下三个文件：**
+
+| 文件 | 作用 | 修改内容 |
+|------|------|---------|
+| `components/Battlefield.tsx` | 主战场 | 核心行为逻辑、颜色系统、攻击动画 |
+| `components/TestMode.tsx` | 测试模式 | 同步行为逻辑、颜色系统 |
+| `components/UnitShowcase.tsx` | 单位展示 | 行为描述文字 |
+
+## 同步修改清单
+
+### 1. 行为逻辑修改
+
+**需要检查的位置：**
+
+- **Battlefield.tsx** 中的 `updateGame` 函数
+- **TestMode.tsx** 中的 `update` 函数
+
+**同步内容：**
+- 移动逻辑（距离计算、速度、目标选择）
+- 攻击逻辑（攻击冷却、伤害计算、特效）
+- 特殊行为（冲锋、奔跑值、战术规避等）
+- `facing` 方向更新逻辑
+
+### 2. 颜色系统修改
+
+**Battlefield.tsx 渲染部分：**
+```typescript
+const playerColors = {
+  [UnitType.SWORDSMAN]: { main: '#3b82f6', dark: '#1e40af' },
+  [UnitType.ARCHER]: { main: '#4ade80', dark: '#16a34a' },
+  [UnitType.SPEARMAN]: { main: '#a855f7', dark: '#7c3aed' },
+  [UnitType.CAVALRY]: { main: '#fbbf24', dark: '#d97706' },
+};
+const enemyColor = { main: '#ef4444', dark: '#b91c1c' };
+const team = unit.side === 'player' ? playerColors[unit.type] : enemyColor;
+```
+
+**TestMode.tsx 渲染部分：**
+需要同样的颜色配置代码。
+
+### 3. 攻击动画修改
+
+**单位绘制器：**
+- `utils/unitDrawer.ts` 中的 `drawMiniSpearman`、`drawMiniCavalry` 等函数
+- 攻击进度 `attackProgress` 的计算需要同步更新
+
+### 4. 单位初始化
+
+**三个文件的初始化代码需保持一致：**
+- `Battlefield.tsx` - `initBattle` 函数
+- `TestMode.tsx` - `initBattle` 函数
+
+**需要初始化的属性：**
+```typescript
+{
+  id: uuidv4(),
+  type,
+  side,
+  x, y,
+  stats: config,
+  isAttacking: false,
+  isCharging: type === UnitType.SPEARMAN,
+  isInvulnerable: false,
+  attackTimer: Math.random() * 0.5,
+  facing: 'right' | 'left',
+  walkPhase: Math.random() * Math.PI * 2,
+  prevX: 0,
+  prevY: 0,
+  vx: 0,
+  vy: 0,
+  chargeValue: type === UnitType.CAVALRY ? 100 : undefined,
+}
+```
+
+### 5. 描述文字更新
+
+**UnitShowcase.tsx** 中的 `unitDetails` 对象：
+```typescript
+const unitDetails = {
+  [UnitType.ARCHER]: {
+    name: '弓箭手',
+    features: '...',
+    freq: '1.2s'
+  },
+  // ...
+};
+```
+
+## 各兵种配置（来自 Excel）
+
+| 兵种 | 颜色 | 攻击范围 | 特殊行为 |
+|------|------|---------|---------|
+| 剑盾兵 | 蓝+深蓝 | 30 | 前排坦克，高防御 |
+| 弓箭手 | 绿+深绿 | 250 | 远程，优先低血量，战术规避 |
+| 矛兵 | 紫+深紫 | 45 | 开局冲锋，撞飞敌人 |
+| 骑兵 | 黄+橙黄 | 30 | 奔跑值系统，无法近战 |
+
+## 常见陷阱
+
+1. **只修改了 Battlefield** - 忘记 TestMode 和 UnitShowcase
+2. **颜色只改了一处** - 渲染代码在两个文件中
+3. **攻击冷却不同步** - 矛兵是 0.5s，其他是 1.2s
+4. **初始化属性缺失** - 新增属性（如 chargeValue）需要在两个 initBattle 中都添加
+5. **facing 方向不更新** - 移动时需要根据移动方向更新朝向
+
+## 验证清单
+
+完成修改后，检查：
+- [ ] Battlefield.tsx 行为逻辑已更新
+- [ ] TestMode.tsx 行为逻辑已同步
+- [ ] UnitShowcase.tsx 描述已更新
+- [ ] 两个文件的颜色配置一致
+- [ ] 两个文件的初始化代码一致
+- [ ] 攻击冷却时间正确
+- [ ] facing 方向在移动时更新
+- [ ] 代码无 TypeScript 错误

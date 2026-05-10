@@ -1,4 +1,4 @@
-import { UnitType } from '../types';
+import { UnitType, Unit } from '../types';
 
 const ATTACK_COOLDOWN = 1.2;
 const VISUAL_COOLDOWN = 0.25;
@@ -192,6 +192,88 @@ const drawMiniSwordsman = (
   ctx.restore();
 };
 
+// 统一的颜色配置
+export const UNIT_TEAM_COLORS = {
+  player: {
+    [UnitType.SWORDSMAN]: { main: '#3b82f6', dark: '#1e40af' },
+    [UnitType.ARCHER]: { main: '#4ade80', dark: '#16a34a' },
+    [UnitType.SPEARMAN]: { main: '#a855f7', dark: '#7c3aed' },
+    [UnitType.CAVALRY]: { main: '#fbbf24', dark: '#d97706' },
+  },
+  enemy: { main: '#ef4444', dark: '#b91c1c' },
+};
+
+// 统一的单位绘制包装函数
+export const drawUnit = (
+  ctx: CanvasRenderingContext2D,
+  unit: Unit,
+  options?: {
+    drawHealthBar?: boolean;
+    showShadow?: boolean;
+  }
+) => {
+  const { drawHealthBar = true, showShadow = true } = options || {};
+  const isActuallyMoving = unit.prevX !== unit.x || unit.prevY !== unit.y;
+  const attackCooldown = unit.type === UnitType.SPEARMAN ? 0.5 : ATTACK_COOLDOWN;
+  const attackProgress = unit.isAttacking ? 1 - (unit.attackTimer / attackCooldown) : 0;
+  const flip = unit.facing === 'left' ? -1 : 1;
+
+  ctx.save();
+  ctx.translate(unit.x, unit.y);
+  ctx.scale(flip, 1);
+
+  const team = unit.side === 'player' ? UNIT_TEAM_COLORS.player[unit.type] : UNIT_TEAM_COLORS.enemy;
+
+  if (showShadow) {
+    drawShadow(ctx, 0, 10);
+  }
+
+  drawUnitOnCanvas(ctx, unit.type, 0, 0, 1, team, unit.isAttacking, unit.walkPhase, attackProgress, isActuallyMoving);
+
+  ctx.restore();
+
+  if (drawHealthBar && !unit.isInvulnerable) {
+    const hpPercent = Math.max(0, unit.stats.hp / unit.stats.maxHp);
+    const barWidth = 18;
+    const barHeight = 3;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(unit.x - barWidth / 2, unit.y - 22, barWidth, barHeight);
+
+    let hpColor = '#22c55e';
+    if (hpPercent < 0.3) hpColor = '#ef4444';
+    else if (hpPercent < 0.6) hpColor = '#eab308';
+
+    ctx.fillStyle = hpColor;
+    ctx.fillRect(unit.x - barWidth / 2, unit.y - 22, barWidth * hpPercent, barHeight);
+  }
+};
+
+// 绘制阴影
+const drawShadow = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(x, y, 8, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+};
+
+// 展示模式专用绘制函数（无血条，大尺寸）
+export const drawUnitShowcase = (
+  ctx: CanvasRenderingContext2D,
+  type: UnitType,
+  centerX: number,
+  centerY: number,
+  scale: number = 3
+) => {
+  const team = UNIT_TEAM_COLORS.player[type] || { main: '#3b82f6', dark: '#1e40af' };
+
+  ctx.save();
+  ctx.translate(centerX, centerY);
+  drawShadow(ctx, 0, 10);
+  drawUnitOnCanvas(ctx, type, 0, 0, scale, team, false, 0, 0, false);
+  ctx.restore();
+};
+
 // 矛兵 - 美化版（deepseek风格，支持三段式矛刺动画）
 const drawMiniSpearman = (
   ctx: CanvasRenderingContext2D,
@@ -262,50 +344,45 @@ const drawMiniSpearman = (
   ctx.fillRect(-2, -14, 1.5, 1.5);
   ctx.fillRect(1, -14, 1.5, 1.5);
 
-  // 长矛 - 和剑盾兵一样的挥砍动画
+  // 长矛 - 下劈式突刺动画（从斜上方向前下方劈刺）
   const swayOffset = (isMoving && !isAttacking)
     ? Math.sin(walkPhase + Math.PI * 0.7) * 1
     : 0;
   ctx.save();
-  ctx.translate(5, -3 + swayOffset);
+  ctx.translate(6, -4 + swayOffset);
 
   let attackRotation = 0;
   if (isAttacking) {
     const p = attackProgress;
-    if (p < 0.25) {
-      attackRotation = (p / 0.25) * 1.2;
-    } else if (p < 0.6) {
-      attackRotation = 1.2;
+    if (p < 0.2) {
+      attackRotation = -(p / 0.2) * 0.8;
+    } else if (p < 0.5) {
+      attackRotation = -0.8 + ((p - 0.2) / 0.3) * 1.8;
     } else {
-      attackRotation = 1.2 * (1 - (p - 0.6) / 0.4);
+      attackRotation = 1.0 * (1 - (p - 0.5) / 0.5);
     }
-    attackRotation = attackRotation * (Math.PI / 3.5);
   }
   ctx.rotate(attackRotation);
 
-  // 矛杆
+  // 矛杆（斜向放置，总长40px）
   ctx.fillStyle = '#8b7355';
-  ctx.fillRect(-1, -22, 2.5, 28);
+  ctx.fillRect(-1.5, -20, 3, 30);
 
   // 矛尖
   ctx.fillStyle = '#c0c0c0';
   ctx.beginPath();
-  ctx.moveTo(0.25, -30);
-  ctx.lineTo(-2, -22);
-  ctx.lineTo(2.5, -22);
+  ctx.moveTo(0, -28);
+  ctx.lineTo(-3, -20);
+  ctx.lineTo(3, -20);
   ctx.closePath();
   ctx.fill();
   ctx.fillStyle = '#e0e0e8';
   ctx.beginPath();
-  ctx.moveTo(0.25, -30);
-  ctx.lineTo(-1, -22);
-  ctx.lineTo(1.5, -22);
+  ctx.moveTo(0, -28);
+  ctx.lineTo(-1.5, -20);
+  ctx.lineTo(1.5, -20);
   ctx.closePath();
   ctx.fill();
-
-  // 矛尾装饰
-  ctx.fillStyle = '#6b5a3a';
-  ctx.fillRect(-1.5, 6, 3, 3);
 
   ctx.restore();
   ctx.restore();
@@ -688,96 +765,181 @@ const drawMiniCavalry = (
   const bobOffset = isMoving ? Math.abs(Math.cos(walkPhase)) * 2 : 0;
   const legSwing = isMoving ? Math.sin(walkPhase) * 4 : 0;
 
-  // 马匹身体（在后面）
-  ctx.fillStyle = '#8b5a3c';
-  ctx.fillRect(-10, 4 + bobOffset, 20, 12);
-  ctx.fillRect(-12, 6 + bobOffset, 6, 8);
-  ctx.fillRect(6, 6 + bobOffset, 6, 8);
+  const horseColor = '#8b5a3c';
+  const horseDark = '#6b4226';
+  const horseLight = '#a07050';
+  const maneColor = '#4a3020';
+  const hoofColor = '#3a2a1a';
 
-  // 马腿
-  ctx.fillStyle = '#5a3020';
-  ctx.fillRect(-8 + legSwing * 0.3, 14 + bobOffset, 4, 8);
-  ctx.fillRect(-2 - legSwing * 0.3, 14 + bobOffset, 4, 8);
-  ctx.fillRect(4 + legSwing * 0.3, 14 + bobOffset, 4, 8);
-  ctx.fillRect(8 - legSwing * 0.3, 14 + bobOffset, 4, 8);
+  // 马匹阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(0, 22, 18, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
 
-  // 马鬃
-  ctx.fillStyle = '#4a3020';
-  ctx.fillRect(-6, -2 + bobOffset, 5, 8);
+  // 马尾（在身体后面，带摆动）
+  ctx.save();
+  ctx.translate(-14, 2 + bobOffset);
+  const tailSway = isMoving ? Math.sin(walkPhase * 0.5) * 3 : 0;
+  ctx.fillStyle = maneColor;
+  ctx.fillRect(-2 + tailSway, 0, 3, 12);
+  ctx.fillRect(-3 + tailSway, 10, 4, 6);
+  ctx.fillRect(-4 + tailSway, 14, 5, 4);
+  ctx.restore();
 
-  // 骑手身体（黄色主题）
-  const bodyGrad = ctx.createLinearGradient(-5, -8 + bobOffset, -5, 4 + bobOffset);
-  bodyGrad.addColorStop(0, '#fbbf24');
-  bodyGrad.addColorStop(0.5, '#d4a017');
-  bodyGrad.addColorStop(1, '#1a1a2e');
-  ctx.fillStyle = bodyGrad;
-  ctx.fillRect(-5, -8 + bobOffset, 10, 12);
+  // 马匹身体
+  ctx.save();
+  ctx.translate(0, 6 - bobOffset);
 
-  // 白色条纹
+  // 马身主体（带渐变）
+  const horseGrad = ctx.createLinearGradient(-14, 0, -14, 16);
+  horseGrad.addColorStop(0, horseColor);
+  horseGrad.addColorStop(0.5, horseDark);
+  horseGrad.addColorStop(1, horseDark);
+  ctx.fillStyle = horseGrad;
+  ctx.fillRect(-14, 0, 28, 16);
+
+  // 马身高光
+  ctx.fillStyle = horseLight;
+  ctx.fillRect(-12, 1, 24, 3);
+
+  // 马头（向前延伸）
+  ctx.fillStyle = horseColor;
+  ctx.fillRect(12, -2, 10, 10);
+  ctx.fillRect(18, 0, 6, 8);
+
+  // 马嘴
+  ctx.fillStyle = horseDark;
+  ctx.fillRect(22, 4, 4, 4);
+
+  // 马眼
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(-1, -8 + bobOffset, 2, 12);
+  ctx.fillRect(16, 0, 3, 3);
+  ctx.fillStyle = '#111111';
+  ctx.fillRect(17, 0.5, 1.5, 2);
+
+  // 马耳
+  ctx.fillStyle = horseDark;
+  ctx.fillRect(14, -6, 2, 5);
+  ctx.fillRect(18, -6, 2, 5);
+
+  // 马鬃毛（沿背部，带摆动动画）
+  ctx.fillStyle = maneColor;
+  for (let i = 0; i < 5; i++) {
+    const mx = -6 + i * 4;
+    const my = -2 + Math.sin(walkPhase + i * 0.5) * (isMoving ? 1.5 : 0);
+    ctx.fillRect(mx, my, 3, 8);
+  }
+
+  // 马腿（四条，带交替摆动动画）
+  // 前腿1
+  const frontLeg1 = isMoving ? Math.sin(walkPhase) * 3 : 0;
+  ctx.fillStyle = horseColor;
+  ctx.fillRect(8, 14, 5, 10 + frontLeg1);
+  ctx.fillStyle = hoofColor;
+  ctx.fillRect(7, 22 + frontLeg1, 7, 3);
+
+  // 前腿2
+  const frontLeg2 = isMoving ? Math.sin(walkPhase + Math.PI) * 3 : 0;
+  ctx.fillStyle = horseColor;
+  ctx.fillRect(14, 14, 5, 10 + frontLeg2);
+  ctx.fillStyle = hoofColor;
+  ctx.fillRect(13, 22 + frontLeg2, 7, 3);
+
+  // 后腿1
+  const backLeg1 = isMoving ? Math.sin(walkPhase + Math.PI) * 3 : 0;
+  ctx.fillStyle = horseColor;
+  ctx.fillRect(-12, 14, 5, 10 + backLeg1);
+  ctx.fillStyle = hoofColor;
+  ctx.fillRect(-13, 22 + backLeg1, 7, 3);
+
+  // 后腿2
+  const backLeg2 = isMoving ? Math.sin(walkPhase) * 3 : 0;
+  ctx.fillStyle = horseColor;
+  ctx.fillRect(-6, 14, 5, 10 + backLeg2);
+  ctx.fillStyle = hoofColor;
+  ctx.fillRect(-7, 22 + backLeg2, 7, 3);
+
+  ctx.restore();
+
+  // 骑手（在马背上）
+  ctx.save();
+  ctx.translate(0, -8 + bobOffset);
+
+  // 骑手身体 - 板甲
+  const riderGrad = ctx.createLinearGradient(-8, -10, -8, 8);
+  riderGrad.addColorStop(0, team.main);
+  riderGrad.addColorStop(0.6, team.dark);
+  riderGrad.addColorStop(1, '#1a1a2e');
+  ctx.fillStyle = riderGrad;
+  ctx.fillRect(-8, -10, 16, 18);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(-1, -10, 2, 18);
+  ctx.fillStyle = team.dark;
+  ctx.fillRect(-11, -10, 3, 8);
+  ctx.fillRect(8, -10, 3, 8);
+  ctx.fillStyle = team.main;
+  ctx.fillRect(-11, -10, 3, 2);
+  ctx.fillRect(8, -10, 3, 2);
+  ctx.fillStyle = '#ef4444';
+  ctx.fillRect(-9, 6, 18, 4);
+  ctx.fillStyle = '#fbbf24';
+  ctx.fillRect(-2, 4, 4, 5);
 
   // 骑手头部
   ctx.fillStyle = '#e8c9a0';
-  ctx.fillRect(-3, -14 + bobOffset, 6, 5);
-
-  // 头盔
-  const helmetGrad = ctx.createLinearGradient(0, -18 + bobOffset, 0, -10 + bobOffset);
-  helmetGrad.addColorStop(0, '#fbbf24');
-  helmetGrad.addColorStop(1, '#d4a017');
+  ctx.fillRect(-3, -14, 6, 5);
+  const helmetGrad = ctx.createLinearGradient(0, -18, 0, -10);
+  helmetGrad.addColorStop(0, team.main);
+  helmetGrad.addColorStop(1, team.dark);
   ctx.fillStyle = helmetGrad;
-  ctx.fillRect(-4, -18 + bobOffset, 8, 6);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(-1, -18 + bobOffset, 2, 6);
+  ctx.fillRect(-4, -18, 8, 6);
+  ctx.fillStyle = '#ef4444';
+  ctx.fillRect(1, -20, 2, 5);
+  ctx.fillStyle = '#111111';
+  ctx.fillRect(-2.5, -13, 1.8, 1.2);
+  ctx.fillRect(1.2, -13, 1.8, 1.2);
 
-  // 眼睛
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(-2.5, -13 + bobOffset, 1.8, 1.2);
-  ctx.fillRect(1.2, -13 + bobOffset, 1.8, 1.2);
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(-2, -12.7 + bobOffset, 1, 0.8);
-  ctx.fillRect(1.5, -12.7 + bobOffset, 1, 0.8);
-
-  // 长矛 - 和剑盾兵一样的挥砍动画
+  // 长矛 - 下劈式突刺动画（从斜上方向前下方劈刺）
   const swayOffset = (isMoving && !isAttacking)
     ? Math.sin(walkPhase + Math.PI * 0.7) * 1
     : 0;
   ctx.save();
-  ctx.translate(5, -5 + bobOffset + swayOffset);
+  ctx.translate(8, -2 + swayOffset);
 
   let attackRotation = 0;
   if (isAttacking) {
     const p = attackProgress;
-    if (p < 0.25) {
-      attackRotation = (p / 0.25) * 1.2;
-    } else if (p < 0.6) {
-      attackRotation = 1.2;
+    if (p < 0.2) {
+      attackRotation = -(p / 0.2) * 0.8;
+    } else if (p < 0.5) {
+      attackRotation = -0.8 + ((p - 0.2) / 0.3) * 1.8;
     } else {
-      attackRotation = 1.2 * (1 - (p - 0.6) / 0.4);
+      attackRotation = 1.0 * (1 - (p - 0.5) / 0.5);
     }
-    attackRotation = attackRotation * (Math.PI / 3.5);
   }
   ctx.rotate(attackRotation);
 
-  // 矛杆
+  // 矛杆（斜向放置，总长40px）
   ctx.fillStyle = '#8b7355';
-  ctx.fillRect(-1, -22, 2.5, 28);
+  ctx.fillRect(-1.5, -20, 3, 30);
 
   // 矛尖
   ctx.fillStyle = '#c0c0c0';
   ctx.beginPath();
-  ctx.moveTo(0.25, -30);
-  ctx.lineTo(-2, -22);
-  ctx.lineTo(2.5, -22);
+  ctx.moveTo(0, -28);
+  ctx.lineTo(-3, -20);
+  ctx.lineTo(3, -20);
   ctx.closePath();
   ctx.fill();
   ctx.fillStyle = '#e0e0e8';
   ctx.beginPath();
-  ctx.moveTo(0.25, -30);
-  ctx.lineTo(-1, -22);
-  ctx.lineTo(1.5, -22);
+  ctx.moveTo(0, -28);
+  ctx.lineTo(-1.5, -20);
+  ctx.lineTo(1.5, -20);
   ctx.closePath();
   ctx.fill();
 
+  ctx.restore();
   ctx.restore();
 };

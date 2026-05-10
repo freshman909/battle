@@ -47,8 +47,11 @@ export interface Unit {
   walkPhase: number;
   prevX: number;
   prevY: number;
+  vx: number;
+  vy: number;
   stamina?: number;
   isRunning?: boolean;
+  chargeValue?: number;
 }
 
 export interface Tile {
