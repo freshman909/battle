@@ -52,6 +52,7 @@ export interface Unit {
   stamina?: number;
   isRunning?: boolean;
   chargeValue?: number;
+  _chargedThisPass?: boolean;
 }
 
 export interface Tile {
@@ -73,4 +74,52 @@ export interface GameState {
     initialMoves: number;
   };
   lastBattleStats?: BattleStats;
+  survivingUnits: UnitType[];
+  lastVictory: boolean;
+  skills: SkillCard[];
+}
+
+export interface SmokeParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  alpha: number;
+  life: number;
+  maxLife: number;
+}
+
+export enum SkillType {
+  HEAL = 'HEAL',
+  BERSERK = 'BERSERK',
+  METEOR = 'METEOR'
+}
+
+export interface SkillConfig {
+  type: SkillType;
+  name: string;
+  description: string;
+  range: number;
+  cost: number;
+  effect: string;
+  duration: number;
+  cooldown: number;
+}
+
+export interface SkillCard {
+  type: SkillType;
+  quantity: number;
+}
+
+export interface ActiveSkillEffect {
+  id: string;
+  type: SkillType;
+  x: number;
+  y: number;
+  range: number;
+  startTime: number;
+  duration: number;
+  affectedUnits: string[];
+  originalStats?: Record<string, { attack: number; speed: number }>; // 用于狂暴效果结束时恢复属性
 }

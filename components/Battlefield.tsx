@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { UnitType, Unit, UnitStats, BattleStats } from '../types';
-import { UNIT_CONFIGS, UNIT_COLORS } from '../constants';
+import { UnitType, Unit, UnitStats, BattleStats, SmokeParticle, SkillType, SkillCard, ActiveSkillEffect } from '../types';
+import { UNIT_CONFIGS, UNIT_COLORS, SKILL_CONFIGS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 import { audio } from '../utils/audio';
 import { drawUnit, drawUnitOnCanvas } from '../utils/unitDrawer';
@@ -10,7 +10,7 @@ interface VisualEffect {
   id: string;
   x: number;
   y: number;
-  type: 'damage' | 'slash' | 'arrow' | 'particle';
+  type: 'damage' | 'slash' | 'arrow' | 'particle' | 'skill_heal' | 'skill_berserk' | 'skill_meteor';
   life: number;
   value?: number;
   angle?: number;
@@ -34,7 +34,10 @@ interface BattlefieldProps {
     attackBonus: number;
     hpBonus: number;
   };
-  onBattleEnd: (victory: boolean, score: number, stats: BattleStats) => void;
+  survivingUnits?: UnitType[];
+  skills: SkillCard[];
+  onBattleEnd: (victory: boolean, score: number, stats: BattleStats, survivors: UnitType[]) => void;
+  onUseSkill: (skillType: SkillType) => void;
 }
 
 const ATTACK_COOLDOWN = 1.2; 
@@ -43,13 +46,32 @@ const CANVAS_HEIGHT = 400;
 const GROUND_TOP = Math.ceil(CANVAS_HEIGHT / 5);
 const GROUND_BOTTOM = CANVAS_HEIGHT - 20;
 
-const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades, onBattleEnd }) => {
+const getAttackCooldown = (unitType: UnitType) => {
+  switch(unitType) {
+    case UnitType.SWORDSMAN: return 1.0;
+    case UnitType.ARCHER: return 0.5;
+    case UnitType.CAVALRY: return 0.7;
+    case UnitType.SPEARMAN: return 0.5;
+    default: return 1.2;
+  }
+};
+
+const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades, survivingUnits = [], skills, onBattleEnd, onUseSkill }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [units, setUnits] = useState<Unit[]>([]);
   const [isGameOver, setIsGameOver] = useState(false);
   const [countdown, setCountdown] = useState(3);
   const effectsRef = useRef<VisualEffect[]>([]);
   const ghostTrailsRef = useRef<Record<string, GhostFrame[]>>({});
+  const smokeParticlesRef = useRef<SmokeParticle[]>([]);
+  const [activeSkills, setActiveSkills] = useState<ActiveSkillEffect[]>([]);
+  const [draggingSkill, setDraggingSkill] = useState<SkillType | null>(null);
+  const [dragPosition, setDragPosition] = useState({ x: 0, y: 0 });
+  const [skillCooldowns, setSkillCooldowns] = useState<Record<SkillType, number>>({
+    [SkillType.HEAL]: 0,
+    [SkillType.BERSERK]: 0,
+    [SkillType.METEOR]: 0,
+  });
   
   const statsRef = useRef<BattleStats>({
     dealt: { [UnitType.ARCHER]: 0, [UnitType.SWORDSMAN]: 0, [UnitType.SPEARMAN]: 0, [UnitType.CAVALRY]: 0, [UnitType.BLANK]: 0 },
@@ -69,12 +91,29 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
     const width = 800;
     const height = 400;
 
-    const sortedPlayerTypes = [...playerUnits].sort((a, b) => {
+    const lvl = Math.min(level, 10);
+
+    const allPlayerUnits = [...survivingUnits, ...playerUnits].sort((a, b) => {
         const order = { [UnitType.SWORDSMAN]: 0, [UnitType.SPEARMAN]: 1, [UnitType.CAVALRY]: 2, [UnitType.ARCHER]: 3 };
         return order[a] - (order[b] ?? 0);
     });
 
-    sortedPlayerTypes.forEach((type) => {
+    const baseEnemyCount = 10 + (lvl - 1) * 5;
+    const playerCount = allPlayerUnits.length;
+    const ratio = playerCount / baseEnemyCount;
+    const extraEnemies = ratio >= 2 ? Math.floor((ratio - 1) * 10) : 0;
+    const enemyCount = baseEnemyCount + extraEnemies;
+
+    const types = lvl <= 2
+      ? [UnitType.SWORDSMAN, UnitType.ARCHER]
+      : lvl <= 4
+        ? [UnitType.SWORDSMAN, UnitType.ARCHER, UnitType.SPEARMAN]
+        : [UnitType.SWORDSMAN, UnitType.ARCHER, UnitType.SPEARMAN, UnitType.CAVALRY];
+
+    const hpMult = 1 + (lvl - 1) * 0.15;
+    const atkMult = 1 + (lvl - 1) * 0.08;
+
+    allPlayerUnits.forEach((type) => {
       const config = { ...UNIT_CONFIGS[type] };
       config.hp += upgrades.hpBonus;
       config.maxHp += upgrades.hpBonus;
@@ -107,15 +146,12 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
       });
     });
 
-    const enemyCount = Math.floor((20 + level * 5) * (2/3));
-    const enemyTypes = [UnitType.SWORDSMAN, UnitType.ARCHER, UnitType.SPEARMAN, UnitType.CAVALRY];
-
     for(let i=0; i<enemyCount; i++) {
-      const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+      const type = types[Math.floor(Math.random() * types.length)];
       const config = { ...UNIT_CONFIGS[type] };
-      config.hp *= (1 + level * 0.12);
-      config.maxHp *= (1 + level * 0.12);
-      config.attack *= (1 + level * 0.08);
+      config.hp *= hpMult;
+      config.maxHp *= hpMult;
+      config.attack *= atkMult;
 
       spawnedUnits.push({
         id: uuidv4(),
@@ -141,6 +177,7 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
     setUnits(spawnedUnits);
     effectsRef.current = [];
     ghostTrailsRef.current = {};
+    smokeParticlesRef.current = [];
     
     const timer = setInterval(() => {
         setCountdown(prev => {
@@ -151,7 +188,7 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
             return prev - 1;
         });
     }, 1000);
-  }, [playerUnits, level, upgrades]);
+  }, [playerUnits, level, upgrades, survivingUnits]);
 
   useEffect(() => { initBattle(); }, [initBattle]);
 
@@ -203,16 +240,54 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
         if (isGameOver || countdown > 0) return prevUnits;
 
         const newUnits = prevUnits.map(u => ({ ...u, stats: { ...u.stats } }));
+        
+        // 检测死亡的士兵并生成烟雾
+        prevUnits.forEach(prevUnit => {
+          const currentUnit = newUnits.find(u => u.id === prevUnit.id);
+          if (prevUnit.stats.hp > 0 && currentUnit && currentUnit.stats.hp <= 0) {
+            for (let i = 0; i < 10; i++) {
+              smokeParticlesRef.current.push({
+                x: currentUnit.x + (Math.random() - 0.5) * 20,
+                y: currentUnit.y - 10 + (Math.random() - 0.5) * 10,
+                vx: (Math.random() - 0.5) * 30,
+                vy: -20 - Math.random() * 30,
+                size: 5 + Math.random() * 8,
+                alpha: 0.6,
+                life: 1.5,
+                maxLife: 1.5,
+              });
+            }
+          }
+        });
+
         const playerAlive = newUnits.some(u => u.side === 'player' && u.stats.hp > 0);
         const enemyAlive = newUnits.some(u => u.side === 'enemy' && u.stats.hp > 0);
 
         if (!playerAlive || !enemyAlive) {
           if (!isGameOver) {
             setIsGameOver(true);
-            setTimeout(() => onBattleEnd(playerAlive, playerAlive ? Math.floor(1000 + level * 100) : 0, statsRef.current), 2000);
+            const playerUnitsAlive = newUnits.filter(u => u.side === 'player' && u.stats.hp > 0);
+            const survivors = playerAlive ? playerUnitsAlive.map(u => u.type) : [];
+            const survivalRatio = playerUnits.length > 0 ? playerUnitsAlive.length / playerUnits.length : 0;
+            const baseScore = 1000 + level * 100;
+            const survivalBonus = Math.floor(500 * survivalRatio);
+            const finalScore = playerAlive ? baseScore + survivalBonus : 0;
+            setTimeout(() => onBattleEnd(playerAlive, finalScore, statsRef.current, survivors), 2000);
           }
           return prevUnits;
         }
+
+        // 剑盾兵协同防御：计算周围友军数量并应用加成
+        newUnits.forEach(unit => {
+          if (unit.type === UnitType.SWORDSMAN && unit.stats.hp > 0) {
+            const nearbyAllies = newUnits.filter(u => 
+              u.side === unit.side && u.id !== unit.id && dist(u.x, u.y, unit.x, unit.y) < 100
+            );
+            const buffMultiplier = 1 + nearbyAllies.length * 0.03;
+            unit.stats.attack = Math.floor(UNIT_CONFIGS[unit.type].attack * buffMultiplier) + (unit.side === 'player' ? upgrades.attackBonus : 0);
+            unit.stats.defense = Math.min(0.95, UNIT_CONFIGS[unit.type].defense * buffMultiplier);
+          }
+        });
 
         newUnits.forEach(unit => {
           if (unit.stats.hp <= 0) return;
@@ -224,45 +299,40 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
           if (enemies.length === 0) return;
 
           if (unit.type === UnitType.SPEARMAN && unit.isCharging) {
-            const targetX = unit.side === 'player' ? 750 : 50;
-            unit.isInvulnerable = true;
+            const targetX = unit.side === 'player' ? 780 : 20;
             const dx = targetX - unit.x;
-            if (Math.abs(dx) < 20) {
+            unit.facing = dx > 0 ? 'right' : 'left';
+            unit.isInvulnerable = true;
+
+            if (Math.abs(dx) < 30) {
               unit.isCharging = false;
               unit.isInvulnerable = false;
             } else {
-              unit.x += (dx > 0 ? 1 : -1) * 350 * deltaTime;
-              unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+              const speed = 300;
+              unit.x += (dx > 0 ? 1 : -1) * speed * deltaTime;
+              unit.walkPhase += 8 * Math.PI * 2 * deltaTime;
+
               if (!ghostTrailsRef.current[unit.id]) ghostTrailsRef.current[unit.id] = [];
               ghostTrailsRef.current[unit.id].unshift({ x: unit.x, y: unit.y, alpha: 0.6 });
               if (ghostTrailsRef.current[unit.id].length > 8) ghostTrailsRef.current[unit.id].pop();
-              return;
-            }
-          }
 
-          if (unit.type === UnitType.SPEARMAN) {
-            if (unit.isCharging) {
-              const targetX = unit.side === 'player' ? 780 : 20;
-              const dx = targetX - unit.x;
-              unit.facing = dx > 0 ? 'right' : 'left';
-              if (Math.abs(dx) < 30) {
-                unit.isCharging = false;
-              } else {
-                const speed = (1 + unit.chargeValue * 0.001) * 120;
-                unit.x += (dx > 0 ? 1 : -1) * speed * deltaTime;
-                unit.walkPhase += 8 * Math.PI * 2 * deltaTime;
-
-                const nearbyEnemies = getNearbyEnemies(enemies, unit.x, unit.y, 20);
-                if (nearbyEnemies.length > 0 && nearbyEnemies[0].type !== UnitType.SPEARMAN) {
-                  applyChargeDamage(unit, nearbyEnemies[0], 22, 50, '#a855f7', 80, 30);
+              const nearbyEnemies = getNearbyEnemies(enemies, unit.x, unit.y, 18);
+              if (nearbyEnemies.length > 0 && nearbyEnemies[0].type !== UnitType.SPEARMAN) {
+                const hitEnemy = nearbyEnemies[0];
+                if (!hitEnemy._chargedThisPass) {
+                  applyChargeDamage(unit, hitEnemy, 22, 50, '#a855f7', 80, 30);
+                  hitEnemy._chargedThisPass = true;
                 }
-                return;
               }
+              return;
             }
           }
 
           if (unit.type === UnitType.CAVALRY) {
             if (unit.chargeValue === undefined) unit.chargeValue = 100;
+
+            // 计算奔跑值对速度的影响：每10点增加0.1像素/秒
+            const speedBonus = unit.chargeValue ? (unit.chargeValue / 10) * 0.1 : 0;
 
             unit.chargeValue += 10 * deltaTime;
 
@@ -270,7 +340,13 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
               return curr.stats.hp < prev.stats.hp ? curr : prev;
             }) : null;
 
-            if (unit.chargeValue > 50 && !unit.isCharging && lowestHpEnemy) {
+            // 开局冲锋：游戏开始3秒内必定冲锋
+            const isInitialCharge = unit.chargeValue >= 100;
+            const canCharge = unit.chargeValue > 50 && lowestHpEnemy;
+            const distToLowest = lowestHpEnemy ? dist(unit.x, unit.y, lowestHpEnemy.x, lowestHpEnemy.y) : Infinity;
+            const shouldStartCharge = (isInitialCharge || canCharge) && !unit.isCharging && distToLowest > 50 && distToLowest < 500;
+
+            if (shouldStartCharge) {
               unit.isCharging = true;
             }
 
@@ -283,8 +359,8 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
 
               if (dx !== 0) unit.facing = dx > 0 ? 'right' : 'left';
 
-              const speedBoost = 1 + unit.chargeValue * 0.001;
-              const speed = speedBoost * 150;
+              const speedBoost = 1 + (unit.chargeValue || 0) * 0.001;
+              const speed = (speedBoost * 150) + speedBonus;
 
               if (dist > 15) {
                 const angle = Math.atan2(dy, dx);
@@ -296,14 +372,17 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
                 ghostTrailsRef.current[unit.id].unshift({ x: unit.x, y: unit.y, alpha: 0.5 });
                 if (ghostTrailsRef.current[unit.id].length > 6) ghostTrailsRef.current[unit.id].pop();
 
-                const nearbyEnemies = getNearbyEnemies(enemies, unit.x, unit.y, 20);
+                const nearbyEnemies = getNearbyEnemies(enemies, unit.x, unit.y, 18);
                 if (nearbyEnemies.length > 0) {
-                  applyChargeDamage(unit, nearbyEnemies[0], 15, 40, '#fbbf24', 60, 20);
-                  unit.chargeValue = 10;
-                  unit.isCharging = false;
+                  const hitEnemy = nearbyEnemies[0];
+                  if (!hitEnemy._chargedThisPass) {
+                    applyChargeDamage(unit, hitEnemy, 15, 40, '#fbbf24', 60, 20);
+                    hitEnemy._chargedThisPass = true;
+                  }
                 }
               } else {
                 unit.isCharging = false;
+                unit.chargeValue = 10;
               }
 
               unit.x = clampX(unit.x);
@@ -326,7 +405,7 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
               const fleeDistAbs = Math.abs(dx);
               if (dx !== 0) unit.facing = dx > 0 ? 'right' : 'left';
               if (fleeDistAbs > 10) {
-                unit.x += (dx > 0 ? 1 : -1) * 60 * deltaTime;
+                unit.x += (dx > 0 ? 1 : -1) * (60 + speedBonus) * deltaTime;
                 unit.walkPhase += 5 * Math.PI * 2 * deltaTime;
               }
               unit.y = clampY(unit.y);
@@ -350,19 +429,20 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
             
             const shields = newUnits.filter(u => u.side === unit.side && u.type === UnitType.SWORDSMAN && u.stats.hp > 0);
             if (shields.length > 0) {
+              // 优先躲在最近的剑盾兵后方
               let nearestShield = shields[0];
               let minSDist = Infinity;
               shields.forEach(s => {
-                const d = Math.sqrt(Math.pow(s.x - unit.x, 2) + Math.pow(s.y - unit.y, 2));
+                const d = dist(s.x, s.y, unit.x, unit.y);
                 if (d < minSDist) { minSDist = d; nearestShield = s; }
               });
 
-              const vx = nearestShield.x - target.x;
-              const vy = nearestShield.y - target.y;
-              const vMag = Math.sqrt(vx*vx + vy*vy);
-              
-              const safeX = nearestShield.x + (vx / vMag) * 50;
-              const safeY = nearestShield.y + (vy / vMag) * 50;
+              // 计算剑盾兵后方安全位置（远离敌人的方向）
+              const enemyDirX = target.x - nearestShield.x;
+              const enemyDirY = target.y - nearestShield.y;
+              const enemyDist = Math.sqrt(enemyDirX * enemyDirX + enemyDirY * enemyDirY);
+              const safeX = nearestShield.x - (enemyDirX / enemyDist) * 50;
+              const safeY = nearestShield.y - (enemyDirY / enemyDist) * 50;
 
               const distToSafe = dist(unit.x, unit.y, safeX, safeY);
               if (distToSafe > 10) {
@@ -373,20 +453,39 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
                 unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
               }
             } else {
+              // 无剑盾兵时，保持距离，优先远离墙壁
               const nearestDist = dist(unit.x, unit.y, target.x, target.y);
-              if (nearestDist < 100) {
-                const angle = Math.atan2(unit.y - target.y, unit.x - target.x);
+              if (nearestDist < 75) {
+                // 远离敌人，优先选择远离墙壁的方向
+                const fleeAngle = Math.atan2(unit.y - target.y, unit.x - target.x);
+                
+                // 检查墙壁距离，调整方向
+                const wallDistLeft = unit.x - 20;
+                const wallDistRight = 780 - unit.x;
+                const wallDistTop = unit.y - (GROUND_TOP + 10);
+                const wallDistBottom = GROUND_BOTTOM - unit.y;
+                
+                let adjustedAngle = fleeAngle;
+                if (wallDistLeft < 50) adjustedAngle += 0.5;
+                if (wallDistRight < 50) adjustedAngle -= 0.5;
+                if (wallDistTop < 30) adjustedAngle += 0.3;
+                if (wallDistBottom < 30) adjustedAngle -= 0.3;
+                
                 unit.facing = unit.x > target.x ? 'right' : 'left';
-                unit.x += Math.cos(angle) * unit.stats.speed * 80 * deltaTime;
-                unit.y += Math.sin(angle) * unit.stats.speed * 80 * deltaTime;
+                unit.x += Math.cos(adjustedAngle) * unit.stats.speed * 80 * deltaTime;
+                unit.y += Math.sin(adjustedAngle) * unit.stats.speed * 80 * deltaTime;
                 unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
                 unit.isAttacking = false;
-              } else {
-                const angle = Math.atan2(unit.y - target.y, unit.x - target.x);
+              } else if (nearestDist > 250) {
+                // 距离过远，靠近敌人
+                const angle = Math.atan2(target.y - unit.y, target.x - unit.x);
                 unit.facing = target.x > unit.x ? 'right' : 'left';
                 unit.x += Math.cos(angle) * unit.stats.speed * 30 * deltaTime;
                 unit.y += Math.sin(angle) * unit.stats.speed * 30 * deltaTime;
                 unit.walkPhase += 7 * Math.PI * 2 * deltaTime;
+              } else {
+                // 在有效攻击范围内，可以攻击
+                unit.isAttacking = true;
               }
             }
             unit.x = clampX(unit.x);
@@ -413,13 +512,29 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
               const cooldown = unit.type === UnitType.SPEARMAN ? 0.5 : ATTACK_COOLDOWN;
               unit.attackTimer = cooldown;
               if (!target.isInvulnerable) {
-                audio.playAttack(unit.type === UnitType.ARCHER);
-                const dmg = unit.stats.attack * (1 - target.stats.defense);
+                audio.playAttack(unit.type === UnitType.ARCHER, unit.type);
+                let dmg = unit.stats.attack * (1 - target.stats.defense);
+                
+                // 剑盾兵保护弓箭手：100px范围内有剑盾兵时，分担1%伤害
+                if (target.type === UnitType.ARCHER) {
+                  const protectingShields = newUnits.filter(u => 
+                    u.type === UnitType.SWORDSMAN && u.side === target.side && 
+                    u.stats.hp > 0 && dist(u.x, u.y, target.x, target.y) < 100
+                  );
+                  if (protectingShields.length > 0) {
+                    const sharedDmg = dmg * 0.01;
+                    dmg -= sharedDmg;
+                    protectingShields.forEach(shield => {
+                      shield.stats.hp -= sharedDmg / protectingShields.length;
+                    });
+                  }
+                }
+                
                 const dmgValue = Math.floor(dmg);
                 target.stats.hp -= dmg;
                 if (unit.side === 'player') statsRef.current.dealt[unit.type] += dmg;
                 else statsRef.current.taken[target.type] += dmg;
-                audio.playHit();
+                audio.playHit(unit.type === UnitType.CAVALRY || unit.type === UnitType.SPEARMAN);
                 
                 // 矛兵突刺特效
                 if (unit.type === UnitType.SPEARMAN) {
@@ -487,17 +602,17 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
           }
         });
 
-        // 弹簧碰撞模型：施加弹力到速度，而非直接修改位置
-        const SPRING_K = 800;
-        const DAMPING = 0.85;
-        const MIN_DISTANCE = 18;
+        // 碰撞处理：冲锋单位无视碰撞，其余使用弹簧模型
+        const SPRING_K = 600;
+        const DAMPING = 0.88;
+        const MIN_DISTANCE = 16;
 
         for (let i = 0; i < newUnits.length; i++) {
           const u1 = newUnits[i];
-          if (u1.stats.hp <= 0) continue;
+          if (u1.stats.hp <= 0 || u1.isCharging) continue;
           for (let j = i + 1; j < newUnits.length; j++) {
             const u2 = newUnits[j];
-            if (u2.stats.hp <= 0) continue;
+            if (u2.stats.hp <= 0 || u2.isCharging) continue;
 
             const dx = u2.x - u1.x;
             const dy = u2.y - u1.y;
@@ -516,23 +631,26 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
           }
         }
 
-        // 边界弹簧力
-        const BOUNDARY_SPRING_K = 600;
-        const BOUNDARY_BUFFER = 5;
+        // 软边界：单位停留在边界上，不会被弹飞
+        const BOUNDARY_FORCE = 300;
         newUnits.forEach(u => {
           if (u.stats.hp <= 0) return;
 
-          if (u.x < 15 + BOUNDARY_BUFFER) {
-            u.vx += (15 + BOUNDARY_BUFFER - u.x) * BOUNDARY_SPRING_K * deltaTime;
+          if (u.x < 20) {
+            u.vx += (20 - u.x) * BOUNDARY_FORCE * deltaTime;
+            u.x = Math.max(20, u.x);
           }
-          if (u.x > 785 - BOUNDARY_BUFFER) {
-            u.vx -= (u.x - (785 - BOUNDARY_BUFFER)) * BOUNDARY_SPRING_K * deltaTime;
+          if (u.x > 780) {
+            u.vx -= (u.x - 780) * BOUNDARY_FORCE * deltaTime;
+            u.x = Math.min(780, u.x);
           }
-          if (u.y < GROUND_TOP + 10 + BOUNDARY_BUFFER) {
-            u.vy += (GROUND_TOP + 10 + BOUNDARY_BUFFER - u.y) * BOUNDARY_SPRING_K * deltaTime;
+          if (u.y < GROUND_TOP + 10) {
+            u.vy += (GROUND_TOP + 10 - u.y) * BOUNDARY_FORCE * deltaTime;
+            u.y = Math.max(GROUND_TOP + 10, u.y);
           }
-          if (u.y > GROUND_BOTTOM - BOUNDARY_BUFFER) {
-            u.vy -= (u.y - (GROUND_BOTTOM - BOUNDARY_BUFFER)) * BOUNDARY_SPRING_K * deltaTime;
+          if (u.y > GROUND_BOTTOM) {
+            u.vy -= (u.y - GROUND_BOTTOM) * BOUNDARY_FORCE * deltaTime;
+            u.y = Math.min(GROUND_BOTTOM, u.y);
           }
         });
 
@@ -554,6 +672,59 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
           ghostTrailsRef.current[id] = ghostTrailsRef.current[id].map(f => ({ ...f, alpha: f.alpha - deltaTime * 4 })).filter(f => f.alpha > 0);
         });
 
+        // 更新烟雾粒子
+        smokeParticlesRef.current = smokeParticlesRef.current.map(p => {
+          p.vy -= 15 * deltaTime;
+          p.vx *= 0.98;
+          p.size += 3 * deltaTime;
+          p.life -= deltaTime;
+          p.alpha = Math.max(0, p.life / p.maxLife);
+          p.x += p.vx * deltaTime;
+          p.y += p.vy * deltaTime;
+          return p;
+        }).filter(p => p.life > 0);
+
+        // 更新技能冷却
+        setSkillCooldowns(prev => {
+          const newCooldowns = { ...prev };
+          Object.keys(newCooldowns).forEach(key => {
+            if (newCooldowns[key as SkillType] > 0) {
+              newCooldowns[key as SkillType] -= deltaTime;
+            }
+          });
+          return newCooldowns;
+        });
+
+        // 更新活跃技能效果
+        setActiveSkills(prev => {
+          return prev.map(skill => {
+            const elapsed = (Date.now() - skill.startTime) / 1000;
+            if (elapsed > skill.duration) {
+              // 技能结束，恢复狂暴效果的原始属性
+              if (skill.type === SkillType.BERSERK && skill.originalStats) {
+                newUnits.forEach(unit => {
+                  if (skill.originalStats![unit.id]) {
+                    unit.stats.attack = skill.originalStats![unit.id].attack;
+                    unit.stats.speed = skill.originalStats![unit.id].speed;
+                  }
+                });
+              }
+              return null;
+            }
+            // 应用持续效果
+            if (skill.type === SkillType.HEAL) {
+              // 每秒恢复1%最大生命值
+              const healAmount = 0.01 * deltaTime;
+              newUnits.forEach(unit => {
+                if (unit.side === 'player' && unit.stats.hp > 0 && skill.affectedUnits.includes(unit.id)) {
+                  unit.stats.hp = Math.min(unit.stats.maxHp, unit.stats.hp + unit.stats.maxHp * healAmount);
+                }
+              });
+            }
+            return skill;
+          }).filter(Boolean) as ActiveSkillEffect[];
+        });
+
         return newUnits.filter(u => u.stats.hp > 0 || u.isInvulnerable);
       });
     }
@@ -565,6 +736,154 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
     requestRef.current = requestAnimationFrame(update);
     return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
   }, [update]);
+
+  // 技能释放函数
+  const handleSkillRelease = useCallback((skillType: SkillType, x: number, y: number) => {
+    const config = SKILL_CONFIGS[skillType];
+    const now = Date.now();
+    
+    // 检查冷却
+    if (skillCooldowns[skillType] > 0) return;
+    
+    // 设置冷却
+    setSkillCooldowns(prev => ({ ...prev, [skillType]: config.cooldown }));
+    
+    // 获取范围内的单位
+    const affectedUnits = units.filter(u => {
+      const distance = dist(u.x, u.y, x, y);
+      return distance < config.range && u.stats.hp > 0;
+    }).map(u => u.id);
+    
+    // 创建技能效果
+    const newEffect: ActiveSkillEffect = {
+      id: uuidv4(),
+      type: skillType,
+      x,
+      y,
+      range: config.range,
+      startTime: now,
+      duration: config.duration,
+      affectedUnits,
+    };
+    
+    // 狂暴效果需要记录原始属性
+    if (skillType === SkillType.BERSERK) {
+      newEffect.originalStats = {};
+      units.forEach(unit => {
+        if (unit.side === 'player' && unit.stats.hp > 0 && affectedUnits.includes(unit.id)) {
+          newEffect.originalStats![unit.id] = {
+            attack: unit.stats.attack,
+            speed: unit.stats.speed,
+          };
+        }
+      });
+    }
+    
+    setActiveSkills(prev => [...prev, newEffect]);
+    
+    // 立即应用效果
+    if (skillType === SkillType.HEAL) {
+      // 立即恢复30%最大生命值
+      setUnits(prevUnits => {
+        return prevUnits.map(unit => {
+          if (unit.side === 'player' && unit.stats.hp > 0 && affectedUnits.includes(unit.id)) {
+            return {
+              ...unit,
+              stats: {
+                ...unit.stats,
+                hp: Math.min(unit.stats.maxHp, unit.stats.hp + unit.stats.maxHp * 0.3)
+              }
+            };
+          }
+          return unit;
+        });
+      });
+      // 添加绿色治疗粒子效果
+      for (let i = 0; i < 20; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 30 + Math.random() * 50;
+        effectsRef.current.push({
+          id: uuidv4(),
+          x: x + Math.cos(angle) * Math.random() * config.range,
+          y: y + Math.sin(angle) * Math.random() * config.range,
+          type: 'skill_heal',
+          life: 1.5,
+          vx: Math.cos(angle) * speed,
+          vy: -50 - Math.random() * 30,
+          size: 3 + Math.random() * 4,
+          color: '#4ade80',
+        });
+      }
+      audio.playAttack(false, 'HEAL');
+    } else if (skillType === SkillType.BERSERK) {
+      // 攻速+50%，攻击力+30%
+      setUnits(prevUnits => {
+        return prevUnits.map(unit => {
+          if (unit.side === 'player' && unit.stats.hp > 0 && affectedUnits.includes(unit.id)) {
+            return {
+              ...unit,
+              stats: {
+                ...unit.stats,
+                attack: unit.stats.attack * 1.3,
+                speed: unit.stats.speed * 1.3,
+              }
+            };
+          }
+          return unit;
+        });
+      });
+      // 添加红色狂暴粒子效果
+      for (let i = 0; i < 15; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 60;
+        effectsRef.current.push({
+          id: uuidv4(),
+          x: x + Math.cos(angle) * Math.random() * config.range,
+          y: y + Math.sin(angle) * Math.random() * config.range,
+          type: 'skill_berserk',
+          life: 1.2,
+          vx: Math.cos(angle) * speed,
+          vy: -30 - Math.random() * 20,
+          size: 4 + Math.random() * 5,
+          color: '#ef4444',
+        });
+      }
+      audio.playAttack(false, 'BERSERK');
+    } else if (skillType === SkillType.METEOR) {
+      // 对敌人造成40点伤害
+      setUnits(prevUnits => {
+        return prevUnits.map(unit => {
+          if (unit.side === 'enemy' && unit.stats.hp > 0 && affectedUnits.includes(unit.id)) {
+            return {
+              ...unit,
+              stats: {
+                ...unit.stats,
+                hp: Math.max(0, unit.stats.hp - 40)
+              }
+            };
+          }
+          return unit;
+        });
+      });
+      // 添加陨石粒子效果
+      for (let i = 0; i < 25; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 50 + Math.random() * 80;
+        effectsRef.current.push({
+          id: uuidv4(),
+          x: x + Math.cos(angle) * Math.random() * config.range * 0.5,
+          y: y + Math.sin(angle) * Math.random() * config.range * 0.5,
+          type: 'skill_meteor',
+          life: 1.0,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 20,
+          size: 5 + Math.random() * 6,
+          color: '#f97316',
+        });
+      }
+      audio.playAttack(false, 'METEOR');
+    }
+  }, [units, skillCooldowns]);
 
   // 战场背景
   const drawBackground = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
@@ -843,77 +1162,413 @@ const Battlefield: React.FC<BattlefieldProps> = ({ playerUnits, level, upgrades,
         ctx.fillStyle = e.color || '#f8e8c0';
         const sz = e.size || 3;
         ctx.fillRect(e.x - sz / 2, e.y - sz / 2, sz, sz);
+      } else if (e.type === 'skill_heal' || e.type === 'skill_berserk' || e.type === 'skill_meteor') {
+        // 技能粒子效果
+        ctx.globalAlpha = Math.max(0, e.life / 1.5) * 0.8;
+        ctx.fillStyle = e.color || '#ffffff';
+        const sz = e.size || 4;
+        
+        // 绘制圆形粒子
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, sz / 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 添加发光效果
+        ctx.globalAlpha = Math.max(0, e.life / 1.5) * 0.3;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, sz, 0, Math.PI * 2);
+        ctx.fill();
       }
       
       ctx.restore();
     });
 
-  }, [units, countdown, isGameOver]);
+    // 绘制烟雾粒子
+    smokeParticlesRef.current.forEach(p => {
+      ctx.save();
+      ctx.globalAlpha = p.alpha * 0.4;
+      const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
+      gradient.addColorStop(0, 'rgba(150, 150, 150, 0.8)');
+      gradient.addColorStop(0.5, 'rgba(100, 100, 100, 0.4)');
+      gradient.addColorStop(1, 'rgba(80, 80, 80, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // 绘制技能效果 - 魔法符文风格
+    activeSkills.forEach(skill => {
+      const elapsed = (Date.now() - skill.startTime) / 1000;
+      const progress = skill.duration > 0 ? elapsed / skill.duration : 1;
+      const alpha = Math.max(0, 1 - progress);
+      const pulseScale = 1 + Math.sin(elapsed * 8) * 0.05;
+      
+      ctx.save();
+      ctx.translate(skill.x, skill.y);
+      
+      if (skill.type === SkillType.HEAL) {
+        // 绿色生命符文 - 旋转的魔法阵
+        const rotation = elapsed * 2;
+        
+        // 外圈光环
+        ctx.globalAlpha = alpha * 0.4;
+        const outerGrad = ctx.createRadialGradient(0, 0, skill.range * 0.7, 0, 0, skill.range);
+        outerGrad.addColorStop(0, 'rgba(34, 197, 94, 0)');
+        outerGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.15)');
+        outerGrad.addColorStop(1, 'rgba(34, 197, 94, 0.3)');
+        ctx.fillStyle = outerGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, skill.range * pulseScale, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 旋转的符文环
+        ctx.globalAlpha = alpha * 0.8;
+        ctx.strokeStyle = 'rgba(74, 222, 128, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const angle = (i / 6) * Math.PI * 2 + rotation;
+          const x = Math.cos(angle) * skill.range * 0.85;
+          const y = Math.sin(angle) * skill.range * 0.85;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        
+        // 内圈六芒星
+        ctx.globalAlpha = alpha * 0.5;
+        ctx.strokeStyle = 'rgba(134, 239, 172, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < 3; i++) {
+          const angle1 = (i / 3) * Math.PI * 2 - rotation * 0.5;
+          const angle2 = ((i + 1.5) / 3) * Math.PI * 2 - rotation * 0.5;
+          ctx.moveTo(Math.cos(angle1) * skill.range * 0.5, Math.sin(angle1) * skill.range * 0.5);
+          ctx.lineTo(Math.cos(angle2) * skill.range * 0.5, Math.sin(angle2) * skill.range * 0.5);
+        }
+        ctx.stroke();
+        
+        // 中心光点
+        ctx.globalAlpha = alpha * 0.9;
+        const centerGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, skill.range * 0.2);
+        centerGrad.addColorStop(0, 'rgba(187, 247, 208, 0.8)');
+        centerGrad.addColorStop(1, 'rgba(187, 247, 208, 0)');
+        ctx.fillStyle = centerGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, skill.range * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+        
+      } else if (skill.type === SkillType.BERSERK) {
+        // 红色烈焰符文 - 燃烧的火焰环
+        const rotation = -elapsed * 3;
+        
+        // 外圈火焰光环
+        ctx.globalAlpha = alpha * 0.5;
+        const outerGrad = ctx.createRadialGradient(0, 0, skill.range * 0.5, 0, 0, skill.range);
+        outerGrad.addColorStop(0, 'rgba(239, 68, 68, 0.1)');
+        outerGrad.addColorStop(0.5, 'rgba(239, 68, 68, 0.25)');
+        outerGrad.addColorStop(1, 'rgba(220, 38, 38, 0.4)');
+        ctx.fillStyle = outerGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, skill.range * pulseScale, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 锯齿火焰环
+        ctx.globalAlpha = alpha * 0.9;
+        ctx.strokeStyle = 'rgba(248, 113, 113, 0.7)';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        const spikes = 12;
+        for (let i = 0; i <= spikes; i++) {
+          const angle = (i / spikes) * Math.PI * 2 + rotation;
+          const innerR = skill.range * 0.75;
+          const outerR = skill.range * 0.9;
+          const r = i % 2 === 0 ? outerR : innerR;
+          const x = Math.cos(angle) * r;
+          const y = Math.sin(angle) * r;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        
+        // 内圈旋转符文
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.strokeStyle = 'rgba(252, 165, 165, 0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < 4; i++) {
+          const angle = (i / 4) * Math.PI * 2 + rotation * 1.5;
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(angle) * skill.range * 0.6, Math.sin(angle) * skill.range * 0.6);
+        }
+        ctx.stroke();
+        
+        // 中心烈焰核心
+        ctx.globalAlpha = alpha * 0.8;
+        const centerGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, skill.range * 0.25);
+        centerGrad.addColorStop(0, 'rgba(254, 202, 202, 0.9)');
+        centerGrad.addColorStop(0.5, 'rgba(239, 68, 68, 0.5)');
+        centerGrad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+        ctx.fillStyle = centerGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, skill.range * 0.25, 0, Math.PI * 2);
+        ctx.fill();
+        
+      } else if (skill.type === SkillType.METEOR) {
+        // 橙色陨石符文 - 坠落的陨石轨迹
+        
+        // 冲击波光环
+        ctx.globalAlpha = alpha * 0.6;
+        const shockGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, skill.range);
+        shockGrad.addColorStop(0, 'rgba(251, 146, 60, 0.3)');
+        shockGrad.addColorStop(0.5, 'rgba(249, 115, 22, 0.2)');
+        shockGrad.addColorStop(1, 'rgba(234, 88, 12, 0)');
+        ctx.fillStyle = shockGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, skill.range * (1 + progress * 0.3), 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 裂纹地面效果
+        ctx.globalAlpha = alpha * 0.7;
+        ctx.strokeStyle = 'rgba(251, 146, 60, 0.6)';
+        ctx.lineWidth = 2;
+        const cracks = 8;
+        for (let i = 0; i < cracks; i++) {
+          const angle = (i / cracks) * Math.PI * 2 + (i % 2) * 0.2;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          const len = skill.range * (0.6 + Math.random() * 0.3);
+          ctx.lineTo(Math.cos(angle) * len, Math.sin(angle) * len);
+          ctx.stroke();
+        }
+        
+        // 外圈陨石环
+        ctx.globalAlpha = alpha * 0.8;
+        ctx.strokeStyle = 'rgba(253, 186, 116, 0.7)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, skill.range * 0.8, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // 中心陨石撞击点
+        ctx.globalAlpha = alpha * 0.9;
+        const centerGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, skill.range * 0.3);
+        centerGrad.addColorStop(0, 'rgba(255, 237, 213, 1)');
+        centerGrad.addColorStop(0.3, 'rgba(251, 146, 60, 0.8)');
+        centerGrad.addColorStop(1, 'rgba(234, 88, 12, 0)');
+        ctx.fillStyle = centerGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, skill.range * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      
+      ctx.restore();
+    });
+
+    // 绘制拖动中的技能范围指示器 - 优化版
+    if (draggingSkill) {
+      const config = SKILL_CONFIGS[draggingSkill];
+      const time = Date.now() / 1000;
+      const pulseAlpha = 0.3 + Math.sin(time * 6) * 0.1;
+      
+      ctx.save();
+      ctx.translate(dragPosition.x, dragPosition.y);
+      
+      // 外圈脉冲
+      ctx.globalAlpha = pulseAlpha * 0.5;
+      let indicatorColor = 'rgba(255, 255, 255';
+      if (draggingSkill === SkillType.HEAL) indicatorColor = 'rgba(74, 222, 128';
+      else if (draggingSkill === SkillType.BERSERK) indicatorColor = 'rgba(248, 113, 113';
+      else if (draggingSkill === SkillType.METEOR) indicatorColor = 'rgba(251, 146, 60';
+      
+      ctx.fillStyle = indicatorColor + ', 0.15)';
+      ctx.beginPath();
+      ctx.arc(0, 0, config.range * 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // 主圆环
+      ctx.globalAlpha = pulseAlpha * 0.8;
+      ctx.strokeStyle = indicatorColor + ', 0.8)';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([8, 4]);
+      ctx.lineDashOffset = -time * 30;
+      ctx.beginPath();
+      ctx.arc(0, 0, config.range, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      // 内圈填充
+      ctx.globalAlpha = pulseAlpha * 0.2;
+      ctx.fillStyle = indicatorColor + ', 0.3)';
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(0, 0, config.range, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // 中心点
+      ctx.globalAlpha = pulseAlpha;
+      ctx.fillStyle = indicatorColor + ', 1)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 4, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.restore();
+    }
+
+  }, [units, countdown, isGameOver, activeSkills, draggingSkill, dragPosition]);
+
+  const getSkillQuantity = (type: SkillType) => {
+    const skill = skills.find(s => s.type === type);
+    return skill ? skill.quantity : 0;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent, skillType: SkillType) => {
+    if (getSkillQuantity(skillType) <= 0 || skillCooldowns[skillType] > 0 || countdown > 0 || isGameOver) return;
+    setDraggingSkill(skillType);
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      setDragPosition({
+        x: (e.clientX - rect.left) * (800 / rect.width),
+        y: (e.clientY - rect.top) * (400 / rect.height)
+      });
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!draggingSkill) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      setDragPosition({
+        x: (e.clientX - rect.left) * (800 / rect.width),
+        y: (e.clientY - rect.top) * (400 / rect.height)
+      });
+    }
+  };
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (!draggingSkill) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      const x = (e.clientX - rect.left) * (800 / rect.width);
+      const y = (e.clientY - rect.top) * (400 / rect.height);
+      
+      // 检查是否在战场范围内
+      if (x >= 0 && x <= 800 && y >= 0 && y <= 400) {
+        handleSkillRelease(draggingSkill, x, y);
+        // 通知父组件减少技能数量
+        onUseSkill(draggingSkill);
+      }
+    }
+    setDraggingSkill(null);
+  };
 
   return (
-    <div className="flex flex-col items-center gap-4 z-10 w-full max-w-4xl px-4">
-      <div className="flex justify-between w-full px-6 py-3 bg-gradient-to-b from-slate-800/80 to-slate-900/80 border border-slate-600 rounded-lg shadow-lg">
-        <div className="flex flex-col items-start">
-          <span className="text-xs text-blue-400 font-bold uppercase tracking-wider mb-1">我方军势</span>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-            <div className="text-blue-300 font-bold text-xl">{units.filter(u => u.side === 'player').length}</div>
+    <div className="flex items-center gap-4 z-10 w-full max-w-4xl px-4">
+      {/* 左侧战场 */}
+      <div className="flex flex-col items-center gap-4 flex-1">
+        <div className="flex justify-between w-full px-6 py-3 bg-gradient-to-b from-slate-800/80 to-slate-900/80 border border-slate-600 rounded-lg shadow-lg">
+          <div className="flex flex-col items-start">
+            <span className="text-xs text-blue-400 font-bold uppercase tracking-wider mb-1">我方军势</span>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+              <div className="text-blue-300 font-bold text-xl">{units.filter(u => u.side === 'player').length}</div>
+            </div>
+          </div>
+          
+          <div className="flex flex-col items-center">
+            <span className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">战场等级</span>
+            <div className="text-yellow-400 font-bold text-2xl">Lv.{level}</div>
+          </div>
+          
+          <div className="flex flex-col items-end">
+            <span className="text-xs text-red-400 font-bold uppercase tracking-wider mb-1">敌方规模</span>
+            <div className="flex items-center gap-2">
+              <div className="text-red-300 font-bold text-xl">{units.filter(u => u.side === 'enemy').length}</div>
+              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+            </div>
           </div>
         </div>
         
-        <div className="flex flex-col items-center">
-          <span className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">战场等级</span>
-          <div className="text-yellow-400 font-bold text-2xl">Lv.{level}</div>
+        <div 
+          className="relative w-full shadow-2xl rounded-lg overflow-hidden border-2 border-slate-700"
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={() => setDraggingSkill(null)}
+        >
+          <canvas 
+            ref={canvasRef} width={800} height={400} 
+            className="w-full"
+            style={{ imageRendering: 'pixelated' }}
+          />
+          
+          {countdown > 0 && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+              <div className="text-8xl text-yellow-400 font-black animate-bounce drop-shadow-lg">
+                {countdown}
+              </div>
+              <div className="text-lg text-white font-bold tracking-widest mt-4 uppercase">列阵中...</div>
+            </div>
+          )}
+          
+          {isGameOver && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md">
+              <div className="text-5xl text-white font-black italic tracking-tight mb-4 drop-shadow-lg">
+                战役结束
+              </div>
+              <div className="w-24 h-0.5 bg-gradient-to-r from-transparent via-white to-transparent"></div>
+            </div>
+          )}
         </div>
         
-        <div className="flex flex-col items-end">
-          <span className="text-xs text-red-400 font-bold uppercase tracking-wider mb-1">敌方规模</span>
+        <div className="flex gap-6 px-4 py-2 bg-slate-800/60 rounded-lg">
           <div className="flex items-center gap-2">
-            <div className="text-red-300 font-bold text-xl">{units.filter(u => u.side === 'enemy').length}</div>
-            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+            <div className="w-3 h-3 bg-green-400 rounded-sm"></div>
+            <span className="text-xs text-slate-300">剑盾</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-red-400 rounded-sm"></div>
+            <span className="text-xs text-slate-300">矛兵</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-blue-400 rounded-sm"></div>
+            <span className="text-xs text-slate-300">弓箭</span>
           </div>
         </div>
       </div>
-      
-      <div className="relative w-full shadow-2xl rounded-lg overflow-hidden border-2 border-slate-700">
-        <canvas 
-          ref={canvasRef} width={800} height={400} 
-          className="w-full"
-          style={{ imageRendering: 'pixelated' }}
-        />
-        
-        {countdown > 0 && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="text-8xl text-yellow-400 font-black animate-bounce drop-shadow-lg">
-              {countdown}
+
+      {/* 右侧技能栏 */}
+      <div className="flex flex-col gap-3 p-3 bg-slate-800/80 border border-slate-600 rounded-lg">
+        <h3 className="text-xs text-yellow-400 font-bold text-center">技能</h3>
+        {Object.values(SKILL_CONFIGS).map(config => {
+          const quantity = getSkillQuantity(config.type);
+          const cooldown = skillCooldowns[config.type];
+          const isAvailable = quantity > 0 && cooldown <= 0 && countdown === 0 && !isGameOver;
+          
+          return (
+            <div 
+              key={config.type}
+              className={`relative w-16 h-16 rounded-lg border-2 flex flex-col items-center justify-center cursor-pointer transition-all ${
+                isAvailable 
+                  ? 'border-yellow-400 bg-yellow-400/20 hover:bg-yellow-400/30' 
+                  : 'border-slate-600 bg-slate-700/50 opacity-50'
+              }`}
+              onMouseDown={(e) => handleMouseDown(e, config.type)}
+            >
+              <span className="text-lg font-bold">
+                {config.type === SkillType.HEAL ? '🟢' : config.type === SkillType.BERSERK ? '🔴' : '🟠'}
+              </span>
+              <span className="text-[10px] text-white font-bold">{quantity}</span>
+              {cooldown > 0 && (
+                <div className="absolute inset-0 bg-black/60 rounded-lg flex items-center justify-center">
+                  <span className="text-xs text-white font-bold">{Math.ceil(cooldown)}s</span>
+                </div>
+              )}
             </div>
-            <div className="text-lg text-white font-bold tracking-widest mt-4 uppercase">列阵中...</div>
-          </div>
-        )}
-        
-        {isGameOver && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md">
-            <div className="text-5xl text-white font-black italic tracking-tight mb-4 drop-shadow-lg">
-              战役结束
-            </div>
-            <div className="w-24 h-0.5 bg-gradient-to-r from-transparent via-white to-transparent"></div>
-          </div>
-        )}
-      </div>
-      
-      <div className="flex gap-6 px-4 py-2 bg-slate-800/60 rounded-lg">
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 bg-green-400 rounded-sm"></div>
-          <span className="text-xs text-slate-300">剑盾</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 bg-red-400 rounded-sm"></div>
-          <span className="text-xs text-slate-300">矛兵</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 bg-blue-400 rounded-sm"></div>
-          <span className="text-xs text-slate-300">弓箭</span>
-        </div>
+          );
+        })}
       </div>
     </div>
   );
